@@ -1,0 +1,25 @@
+{
+  "extends": "solhint:recommended",
+  "rules": {
+    "no-empty-blocks": ["error", { "ignoreConstructors": true }],
+    "compiler-version": ["error", "^0.8.23"],
+    "func-visibility": ["warn", { "ignoreConstructors": true }],
+    "not-rely-on-time": "warn",
+    "avoid-low-level-calls": "warn",
+    "no-complex-fallback": "warn",
+    "ordering": "warn",
+    "named-parameters-mapping": "warn",
+    "gas-strict-inequalities": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["contracts/test-helpers/*.sol"],
+      "rules": {
+        "no-empty-blocks": "off",
+        "no-complex-fallback": "off",
+        "avoid-low-level-calls": "off",
+        "ordering": "off"
+      }
+    }
+  ]
+}
