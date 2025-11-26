@@ -2,7 +2,67 @@ const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 
+// Hardhat default account private keys (for testing only)
+const HARDHAT_PRIVATE_KEYS = [
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // account 0 (owner)
+    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // account 1 (user1)
+    "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // account 2 (user2)
+    "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6", // account 3 (bundler)
+    "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a", // account 4 (beneficiary)
+];
+
 describe("Transfer Failure Tests", function () {
+    // Helper function to sign a user operation
+    // ERC-4337 expects direct ECDSA signature on userOpHash (no EIP-191 prefix)
+    async function signUserOp(userOp, signer, entryPoint, chainId) {
+        // Create the user operation hash (same as _getUserOpHash in EntryPoint)
+        // Note: signature is NOT included per ERC-4337 spec - it would be circular
+        const userOpHash = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+                ["bytes32", "address", "uint256"],
+                [
+                    ethers.keccak256(
+                        ethers.AbiCoder.defaultAbiCoder().encode(
+                            ["address", "uint256", "bytes32", "bytes32", "bytes32", "uint256", "bytes32", "bytes32"],
+                            [
+                                userOp.sender,
+                                userOp.nonce,
+                                ethers.keccak256(userOp.initCode),
+                                ethers.keccak256(userOp.callData),
+                                userOp.accountGasLimits,
+                                userOp.preVerificationGas,
+                                userOp.gasFees,
+                                ethers.keccak256(userOp.paymasterAndData)
+                            ]
+                        )
+                    ),
+                    entryPoint.target,
+                    chainId
+                ]
+            )
+        );
+        
+        // Find the private key for this signer from Hardhat defaults
+        const signerAddress = await signer.getAddress();
+        const signers = await ethers.getSigners();
+        let privateKey = null;
+        for (let i = 0; i < signers.length && i < HARDHAT_PRIVATE_KEYS.length; i++) {
+            if ((await signers[i].getAddress()) === signerAddress) {
+                privateKey = HARDHAT_PRIVATE_KEYS[i];
+                break;
+            }
+        }
+        if (!privateKey) {
+            throw new Error(`Private key not found for signer ${signerAddress}`);
+        }
+        
+        // Sign the hash directly using SigningKey (no EIP-191 prefix)
+        // OZ SignerECDSA uses ECDSA.tryRecover which expects raw signature
+        const signingKey = new ethers.SigningKey(privateKey);
+        const sig = signingKey.sign(userOpHash);
+        return sig.serialized;
+    }
+
     async function deploySystemWithMaliciousContractsFixture() {
         const [owner, user1] = await ethers.getSigners();
         
@@ -77,7 +137,7 @@ describe("Transfer Failure Tests", function () {
             // Fund the wallet for gas
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
             
-            // Create user operation
+            // Create user operation with signature
             const userOp = {
                 sender: wallet.target,
                 nonce: 0,
@@ -95,6 +155,10 @@ describe("Transfer Failure Tests", function () {
                 paymasterAndData: "0x",
                 signature: "0x"
             };
+            
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
             
             // Use malicious contract as beneficiary - should trigger BeneficiaryTransferFailed
             await expect(entryPoint.connect(user1).handleOps([userOp], ethRejecter.target))
@@ -243,6 +307,10 @@ describe("Transfer Failure Tests", function () {
                 signature: "0x"
             };
             
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
+            
             // Should process but mark as failed
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
                 .to.emit(entryPoint, "UserOperationEvent");
@@ -273,6 +341,10 @@ describe("Transfer Failure Tests", function () {
                 signature: "0x"
             };
             
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
+            
             // Should handle zero gas operation
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
                 .to.not.be.reverted;
@@ -300,6 +372,10 @@ describe("Transfer Failure Tests", function () {
                 paymasterAndData: "0x",
                 signature: "0x"
             };
+            
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
             
             // Should handle minimal gas operation
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
@@ -331,6 +407,10 @@ describe("Transfer Failure Tests", function () {
                 signature: "0x"
             };
             
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
+            
             // Execute operation and capture hash from event
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
                 .to.emit(entryPoint, "UserOperationEvent");
@@ -340,6 +420,8 @@ describe("Transfer Failure Tests", function () {
             const { entryPoint, wallet, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("2") });
+            
+            const chainId = (await ethers.provider.getNetwork()).chainId;
             
             const userOp1 = {
                 sender: wallet.target,
@@ -352,12 +434,20 @@ describe("Transfer Failure Tests", function () {
                 paymasterAndData: "0x",
                 signature: "0x"
             };
+            userOp1.signature = await signUserOp(userOp1, user1, entryPoint, chainId);
             
             const userOp2 = {
-                ...userOp1,
+                sender: wallet.target,
                 nonce: 1,
-                callData: "0x5678" // Different callData
+                initCode: "0x",
+                callData: "0x5678", // Different callData
+                accountGasLimits: ethers.solidityPacked(["uint128", "uint128"], [100000, 200000]),
+                preVerificationGas: 50000,
+                gasFees: ethers.solidityPacked(["uint128", "uint128"], [ethers.parseUnits("5", "gwei"), ethers.parseUnits("10", "gwei")]),
+                paymasterAndData: "0x",
+                signature: "0x"
             };
+            userOp2.signature = await signUserOp(userOp2, user1, entryPoint, chainId);
             
             // Execute both operations
             await entryPoint.connect(user1).handleOps([userOp1], user1.address);

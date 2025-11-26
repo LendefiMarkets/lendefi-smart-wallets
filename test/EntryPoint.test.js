@@ -270,7 +270,7 @@ describe("EntryPoint", function () {
                 signature: "0x"
             };
             
-            await expect(entryPoint.connect(user1).simulateExecution(mockUserOp))
+            await expect(entryPoint.connect(user1).innerExecuteCall(mockUserOp))
                 .to.be.revertedWithCustomError(entryPoint, "UnauthorizedCaller");
         });
     });

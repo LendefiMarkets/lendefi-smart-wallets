@@ -2,6 +2,15 @@ const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 
+// Hardhat default account private keys (for testing only)
+const HARDHAT_PRIVATE_KEYS = [
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // account 0 (owner)
+    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // account 1 (user1)
+    "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // account 2 (user2)
+    "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6", // account 3 (bundler)
+    "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a", // account 4 (beneficiary)
+];
+
 describe("UserOperation Flow Tests", function () {
     async function deployFullSystemFixture() {
         const [owner, user1, user2, bundler, beneficiary] = await ethers.getSigners();
@@ -44,6 +53,57 @@ describe("UserOperation Flow Tests", function () {
         };
     }
 
+    // Helper function to sign a user operation
+    // ERC-4337 expects direct ECDSA signature on userOpHash (no EIP-191 prefix)
+    async function signUserOp(userOp, signer, entryPoint, chainId) {
+        // Create the user operation hash (same as _getUserOpHash in EntryPoint)
+        // Note: signature is NOT included per ERC-4337 spec - it would be circular
+        const userOpHash = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+                ["bytes32", "address", "uint256"],
+                [
+                    ethers.keccak256(
+                        ethers.AbiCoder.defaultAbiCoder().encode(
+                            ["address", "uint256", "bytes32", "bytes32", "bytes32", "uint256", "bytes32", "bytes32"],
+                            [
+                                userOp.sender,
+                                userOp.nonce,
+                                ethers.keccak256(userOp.initCode),
+                                ethers.keccak256(userOp.callData),
+                                userOp.accountGasLimits,
+                                userOp.preVerificationGas,
+                                userOp.gasFees,
+                                ethers.keccak256(userOp.paymasterAndData)
+                            ]
+                        )
+                    ),
+                    entryPoint.target,
+                    chainId
+                ]
+            )
+        );
+        
+        // Find the private key for this signer from Hardhat defaults
+        const signerAddress = await signer.getAddress();
+        const signers = await ethers.getSigners();
+        let privateKey = null;
+        for (let i = 0; i < signers.length && i < HARDHAT_PRIVATE_KEYS.length; i++) {
+            if ((await signers[i].getAddress()) === signerAddress) {
+                privateKey = HARDHAT_PRIVATE_KEYS[i];
+                break;
+            }
+        }
+        if (!privateKey) {
+            throw new Error(`Private key not found for signer ${signerAddress}`);
+        }
+        
+        // Sign the hash directly using SigningKey (no EIP-191 prefix)
+        // OZ SignerECDSA uses ECDSA.tryRecover which expects raw signature
+        const signingKey = new ethers.SigningKey(privateKey);
+        const sig = signingKey.sign(userOpHash);
+        return sig.serialized;
+    }
+
     async function createUserOperation(wallet, target, value, callData, nonce = null) {
         if (nonce === null) {
             nonce = await wallet["getNonce()"]();
@@ -68,6 +128,13 @@ describe("UserOperation Flow Tests", function () {
         };
     }
 
+    async function createSignedUserOperation(wallet, signer, entryPoint, target, value, callData, nonce = null) {
+        const userOp = await createUserOperation(wallet, target, value, callData, nonce);
+        const chainId = (await ethers.provider.getNetwork()).chainId;
+        userOp.signature = await signUserOp(userOp, signer, entryPoint, chainId);
+        return userOp;
+    }
+
     describe("UserOperation Validation", function () {
         it("Should validate user operation with correct nonce", async function () {
             const { entryPoint, wallet, user1, beneficiary } = await loadFixture(deployFullSystemFixture);
@@ -82,8 +149,8 @@ describe("UserOperation Flow Tests", function () {
                 "0x"
             ]);
             
-            // Create user operation
-            const userOp = await createUserOperation(wallet, user1.address, ethers.parseEther("0.1"), executeCallData);
+            // Create signed user operation
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, ethers.parseEther("0.1"), executeCallData);
             
             // Handle the operation - this will test _validateUserOp and _validateNonce
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
@@ -96,8 +163,8 @@ describe("UserOperation Flow Tests", function () {
             // Fund the wallet for gas
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
             
-            // Create user operation with wrong nonce
-            const userOp = await createUserOperation(wallet, user1.address, 0, "0x", 999); // Wrong nonce
+            // Create signed user operation with wrong nonce
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x", 999);
             
             // Should revert due to InvalidNonce
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
@@ -116,14 +183,14 @@ describe("UserOperation Flow Tests", function () {
             
             // First operation with key 0
             const nonce1 = (BigInt(key1) << 64n) | 0n; // seq = 0
-            const userOp1 = await createUserOperation(wallet, user1.address, 0, "0x", nonce1);
+            const userOp1 = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x", nonce1);
             
             await expect(entryPoint.connect(user1).handleOps([userOp1], beneficiary.address))
                 .to.not.be.reverted;
             
             // Second operation with key 1 should also work (different key space)
             const nonce2 = (BigInt(key2) << 64n) | 0n; // seq = 0 for key 1
-            const userOp2 = await createUserOperation(wallet, user1.address, 0, "0x", nonce2);
+            const userOp2 = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x", nonce2);
             
             await expect(entryPoint.connect(user1).handleOps([userOp2], beneficiary.address))
                 .to.not.be.reverted;
@@ -134,7 +201,7 @@ describe("UserOperation Flow Tests", function () {
             
             // Don't fund the wallet - insufficient deposit
             
-            const userOp = await createUserOperation(wallet, user1.address, 0, "0x");
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x");
             
             // Should revert due to InsufficientDeposit
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
@@ -156,7 +223,7 @@ describe("UserOperation Flow Tests", function () {
                 "0x"
             ]);
             
-            const userOp = await createUserOperation(wallet, user2.address, ethers.parseEther("0.1"), executeCallData);
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user2.address, ethers.parseEther("0.1"), executeCallData);
             
             const initialBalance = await ethers.provider.getBalance(user2.address);
             
@@ -181,7 +248,7 @@ describe("UserOperation Flow Tests", function () {
                 "0x"
             ]);
             
-            const userOp = await createUserOperation(wallet, user1.address, ethers.parseEther("10"), executeCallData);
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, ethers.parseEther("10"), executeCallData);
             
             // Operation should be processed but marked as failed
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
@@ -210,8 +277,8 @@ describe("UserOperation Flow Tests", function () {
             
             const nonce1 = await wallet["getNonce()"]();
             const nonce2 = nonce1 + 1n;
-            const userOp1 = await createUserOperation(wallet, wallet.target, ethers.parseEther("0.1"), executeCallData1, nonce1);
-            const userOp2 = await createUserOperation(wallet, wallet.target, ethers.parseEther("0.2"), executeCallData2, nonce2);
+            const userOp1 = await createSignedUserOperation(wallet, user1, entryPoint, wallet.target, ethers.parseEther("0.1"), executeCallData1, nonce1);
+            const userOp2 = await createSignedUserOperation(wallet, user1, entryPoint, wallet.target, ethers.parseEther("0.2"), executeCallData2, nonce2);
             
             const initialBalance = await ethers.provider.getBalance(user2.address);
             
@@ -238,7 +305,7 @@ describe("UserOperation Flow Tests", function () {
                 "0x"
             ]);
             
-            const userOp = await createUserOperation(wallet, user2.address, ethers.parseEther("0.1"), executeCallData);
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user2.address, ethers.parseEther("0.1"), executeCallData);
             
             // Create aggregated operation structure
             const opsPerAggregator = [{
@@ -272,7 +339,7 @@ describe("UserOperation Flow Tests", function () {
             const userOp = await createUserOperation(wallet, user1.address, 0, "0x");
             
             // Direct call should fail - only EntryPoint can call itself
-            await expect(entryPoint.connect(user1).simulateExecution(userOp))
+            await expect(entryPoint.connect(user1).innerExecuteCall(userOp))
                 .to.be.revertedWithCustomError(entryPoint, "UnauthorizedCaller");
         });
 
@@ -289,9 +356,9 @@ describe("UserOperation Flow Tests", function () {
                 "0x"
             ]);
             
-            const userOp = await createUserOperation(wallet, user2.address, ethers.parseEther("0.1"), executeCallData);
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user2.address, ethers.parseEther("0.1"), executeCallData);
             
-            // This will internally call simulateExecution during execution
+            // This will internally call innerExecuteCall during execution
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
                 .to.not.be.reverted;
         });
@@ -319,6 +386,10 @@ describe("UserOperation Flow Tests", function () {
                 paymasterAndData: "0x",
                 signature: "0x"
             };
+            
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
             
             // Fund with exact calculated amount
             const totalGas = 50000 + 100000 + 21000; // 171,000
@@ -352,6 +423,10 @@ describe("UserOperation Flow Tests", function () {
                 signature: "0x"
             };
             
+            // Sign the operation
+            const chainId = (await ethers.provider.getNetwork()).chainId;
+            userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
+            
             // Fund with sufficient amount
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
             
@@ -367,7 +442,7 @@ describe("UserOperation Flow Tests", function () {
             // Fund the wallet
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
             
-            const userOp = await createUserOperation(wallet, user1.address, 0, "0x");
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x");
             
             const initialBeneficiaryBalance = await ethers.provider.getBalance(beneficiary.address);
             
@@ -386,7 +461,7 @@ describe("UserOperation Flow Tests", function () {
             
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
             
-            const userOp = await createUserOperation(wallet, user1.address, 0, "0x");
+            const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x");
             
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
                 .to.not.be.reverted;
@@ -407,7 +482,7 @@ describe("UserOperation Flow Tests", function () {
             
             for (const { key, seq } of operations) {
                 const nonce = (BigInt(key) << 64n) | BigInt(seq);
-                const userOp = await createUserOperation(wallet, user1.address, 0, "0x", nonce);
+                const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x", nonce);
                 
                 await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
                     .to.not.be.reverted;
