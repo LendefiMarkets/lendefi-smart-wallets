@@ -27,10 +27,20 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
     mapping(address user => address wallet) public userToWallet;
     mapping(address wallet => bool isValid) public isLendefiWallet;
 
+    /**
+     * @dev Storage gap for future upgrades
+     * This allows adding new state variables in future versions without
+     * affecting the storage layout of derived contracts
+     */
+    uint256[50] private __gap;
+
     // Events
     event AccountCreated(address indexed account, address indexed owner, uint256 salt);
     event SmartWalletImplementationUpdated(address indexed oldImplementation, address indexed newImplementation);
     event PaymasterUpdated(address indexed oldPaymaster, address indexed newPaymaster);
+    event StakeAdded(address indexed sender, uint256 amount, uint32 unstakeDelaySec);
+    event StakeUnlocked();
+    event StakeWithdrawn(address indexed to, uint256 amount);
 
     // Custom errors
     error InvalidPaymaster();
@@ -111,17 +121,21 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
 
     /**
      * @dev Add stake to the factory (required by ERC-4337)
+     * @notice Only owner can add stake to prevent unauthorized fund locking
      * @param unstakeDelaySec Unstake delay in seconds
      */
-    function addStake(uint32 unstakeDelaySec) external payable {
+    function addStake(uint32 unstakeDelaySec) external payable onlyOwner {
         entryPoint.addStake{ value: msg.value }(unstakeDelaySec);
+        emit StakeAdded(msg.sender, msg.value, unstakeDelaySec);
     }
 
     /**
-     * @dev Unlock stake
+     * @dev Unlock stake - initiates the unstake delay period
+     * @notice Only owner can unlock stake
      */
-    function unlockStake() external {
+    function unlockStake() external onlyOwner {
         entryPoint.unlockStake();
+        emit StakeUnlocked();
     }
 
     /**

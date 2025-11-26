@@ -339,10 +339,12 @@ contract LendefiPaymaster is IPaymaster, Ownable {
 
         // Check subscription validity
         if (subscription.tier == SubscriptionTier.NONE) revert NoSubscription();
-        if (subscription.expiresAt < block.timestamp + 1) revert SubscriptionExpired();
+        // M-04 Fix: Use >= comparison for clearer expiry check
+        if (block.timestamp >= subscription.expiresAt) revert SubscriptionExpired();
 
         // Check monthly reset - uses fixed 30 day period for consistency
-        if (block.timestamp > subscription.lastResetTime + 30 days - 1) {
+        // M-03 Fix: Use exact 30 days comparison
+        if (block.timestamp >= subscription.lastResetTime + 30 days) {
             subscription.gasUsedThisMonth = 0;
             subscription.lastResetTime = uint48(block.timestamp);
         }
@@ -350,22 +352,28 @@ contract LendefiPaymaster is IPaymaster, Ownable {
 
     /**
      * @dev Extract and validate user from operation
+     * @notice The "user" in this context is the smart wallet address itself.
+     *         Subscription management uses wallet addresses as the key because:
+     *         1. UserOperations only contain the wallet address (sender), not the wallet owner
+     *         2. The wallet is what executes operations and consumes gas
+     *         3. One subscription per wallet ensures clear gas accounting
+     *         When granting subscriptions, use the wallet address, not the owner address.
      * @param userOp The user operation
-     * @return user The extracted user address
+     * @return user The smart wallet address (which is the subscription key)
      */
     function _validateAndExtractUser(PackedUserOperation calldata userOp) private view returns (address user) {
-        // Verify sender is a valid Lendefi wallet
+        // The "user" for subscription purposes is the smart wallet address
         address wallet = userOp.sender;
+        
+        // Verify sender is a valid Lendefi wallet
         (bool success, bytes memory data) = smartWalletFactory.staticcall(
             abi.encodeWithSelector(bytes4(keccak256("isValidWallet(address)")), wallet)
         );
         if (!success || !abi.decode(data, (bool))) revert InvalidWallet();
 
-        // Find user by checking if this wallet belongs to them
-        // Extract from paymasterData if provided
-        // For now, use wallet sender as user (simplification)
-        // In a real implementation, extract from paymasterAndData
-        user = userOp.sender;
+        // Return wallet address as the user for subscription lookup
+        // Note: Subscriptions should be granted to wallet addresses, not owner addresses
+        user = wallet;
         if (user == address(0)) revert IAccountFactory.InvalidUser();
     }
 

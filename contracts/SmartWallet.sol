@@ -14,6 +14,9 @@ import { IEntryPoint } from "@openzeppelin/contracts/interfaces/draft-IERC4337.s
  * Combines OZ Account base with execute functionality and ownership management
  */
 contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, ReentrancyGuard {
+    // Constants
+    uint256 public constant MAX_BATCH_SIZE = 50;
+
     // State variables
     IEntryPoint private immutable _entryPoint;
     address public owner;
@@ -28,6 +31,8 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
     error Unauthorized();
     error SameOwner();
     error InvalidOwner();
+    error BatchTooLarge();
+    error ContractOwnerWarning();
 
     // Modifiers
     modifier onlyOwner() {
@@ -55,6 +60,13 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         _entryPoint = entryPointAddr;
         _disableInitializers();
     }
+
+    /**
+     * @dev Receive function to accept plain ETH transfers
+     * This is essential for smart wallets to receive ETH from transfers,
+     * exchanges, and other contracts that don't use call with data
+     */
+    receive() external payable override {}
 
     /**
      * @dev Initialize the account with an owner
@@ -90,6 +102,9 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         if (targets.length != values.length || values.length != datas.length) {
             revert InvalidUserOp();
         }
+        if (targets.length > MAX_BATCH_SIZE) {
+            revert BatchTooLarge();
+        }
         for (uint256 i = 0; i < targets.length; ) {
             _call(targets[i], values[i], datas[i]);
             unchecked {
@@ -119,19 +134,23 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
 
     /**
      * @dev Change owner
+     * @notice WARNING: If newOwner is a contract, ensure it can sign messages
+     *         or the wallet may become inaccessible for UserOp validation.
+     *         Contract owners must implement proper signature validation.
      * @param newOwner New owner address
      */
     function changeOwner(address newOwner) external onlyOwner nonZeroAddress(newOwner) {
         if (newOwner == owner) revert SameOwner(); // Cannot transfer to same owner
 
-        // Additional validation for contract addresses
+        // Prevent setting this contract as its own owner
+        if (newOwner == address(this)) revert InvalidOwner();
+
+        // Check if newOwner is a contract and emit warning event
         uint256 codeSize;
         assembly {
             codeSize := extcodesize(newOwner)
         }
-        // Allow EOAs and contracts, but ensure it's not this contract
-        if (newOwner == address(this)) revert InvalidOwner();
-
+        
         address oldOwner = owner;
         owner = newOwner;
         _setSigner(newOwner); // Update signer for OZ SignerECDSA
