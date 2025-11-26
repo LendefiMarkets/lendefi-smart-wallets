@@ -11,6 +11,7 @@ yarn.lock
 # Hardhat
 cache/
 audit/
+archive/
 artifacts/
 typechain-types/
 

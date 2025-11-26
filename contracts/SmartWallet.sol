@@ -6,35 +6,51 @@ import { SignerECDSA } from "@openzeppelin/contracts/utils/cryptography/signers/
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import { IEntryPoint } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import { IEntryPoint, PackedUserOperation } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import { ERC4337Utils } from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { P256 } from "@openzeppelin/contracts/utils/cryptography/P256.sol";
+import { SessionKeyManager } from "./SessionKeyManager.sol";
 
 /**
  * @title SmartWallet
- * @dev ERC-4337 compliant smart contract wallet built on OpenZeppelin Account abstraction
- * Combines OZ Account base with execute functionality and ownership management
+ * @dev ERC-4337 compliant smart contract wallet with session key support.
+ * Supports both ECDSA (secp256k1) and P256 (secp256r1/Passkey) session keys
+ * for time-limited, scope-restricted delegated signing capabilities.
+ * 
+ * Key features:
+ * - ERC-4337 Account Abstraction
+ * - Session keys for delegated access (ECDSA + P256/Passkey)
+ * - Time-bounded permissions
+ * - Target/selector restrictions
+ * - Spending limits
  */
-contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, ReentrancyGuard {
-    // Constants
+contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, ReentrancyGuard, SessionKeyManager {
+    // ============ Constants ============
+    
     uint256 public constant MAX_BATCH_SIZE = 50;
 
-    // State variables
+    // ============ State Variables ============
+    
     IEntryPoint private immutable _entryPoint;
     address public owner;
 
-    // Events
+    // ============ Events ============
+    
     event SmartWalletInitialized(IEntryPoint indexed entryPoint, address indexed owner);
     event OwnerChanged(address indexed previousOwner, address indexed newOwner);
 
-    // Custom errors
+    // ============ Errors ============
+    
     error ZeroAddress();
     error InvalidUserOp();
     error Unauthorized();
     error SameOwner();
     error InvalidOwner();
     error BatchTooLarge();
-    error ContractOwnerWarning();
 
-    // Modifiers
+    // ============ Modifiers ============
+    
     modifier onlyOwner() {
         _onlyOwner();
         _;
@@ -52,6 +68,8 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         _;
     }
 
+    // ============ Constructor ============
+
     /**
      * @dev Constructor that sets the EntryPoint address
      * @param entryPointAddr The EntryPoint contract address
@@ -61,12 +79,14 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         _disableInitializers();
     }
 
+    // ============ Receive ============
+
     /**
      * @dev Receive function to accept plain ETH transfers
-     * This is essential for smart wallets to receive ETH from transfers,
-     * exchanges, and other contracts that don't use call with data
      */
     receive() external payable override {}
+
+    // ============ Initialization ============
 
     /**
      * @dev Initialize the account with an owner
@@ -74,9 +94,11 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      */
     function initialize(address _owner) external virtual initializer nonZeroAddress(_owner) {
         owner = _owner;
-        _setSigner(_owner); // Set the signer for OZ SignerECDSA
+        _setSigner(_owner);
         emit SmartWalletInitialized(entryPoint(), _owner);
     }
+
+    // ============ Execution Functions ============
 
     /**
      * @dev Execute a transaction
@@ -113,6 +135,8 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         }
     }
 
+    // ============ Deposit Management ============
+
     /**
      * @dev Deposit funds to EntryPoint
      */
@@ -132,30 +156,24 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         entryPoint().withdrawTo(withdrawAddress, amount);
     }
 
+    // ============ Owner Management ============
+
     /**
      * @dev Change owner
      * @notice WARNING: If newOwner is a contract, ensure it can sign messages
-     *         or the wallet may become inaccessible for UserOp validation.
-     *         Contract owners must implement proper signature validation.
      * @param newOwner New owner address
      */
     function changeOwner(address newOwner) external onlyOwner nonZeroAddress(newOwner) {
-        if (newOwner == owner) revert SameOwner(); // Cannot transfer to same owner
-
-        // Prevent setting this contract as its own owner
+        if (newOwner == owner) revert SameOwner();
         if (newOwner == address(this)) revert InvalidOwner();
-
-        // Check if newOwner is a contract and emit warning event
-        uint256 codeSize;
-        assembly {
-            codeSize := extcodesize(newOwner)
-        }
         
         address oldOwner = owner;
         owner = newOwner;
-        _setSigner(newOwner); // Update signer for OZ SignerECDSA
+        _setSigner(newOwner);
         emit OwnerChanged(oldOwner, newOwner);
     }
+
+    // ============ Signature Validation ============
 
     /**
      * @dev Check if signature is valid (ERC-1271)
@@ -167,11 +185,58 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         bytes32 hash,
         bytes calldata signature
     ) external view override returns (bytes4 magicValue) {
+        // Check for session key signature (ECDSA or P256)
+        if (signature.length > 4) {
+            bytes4 sigType = bytes4(signature[:4]);
+            
+            if (sigType == SESSION_KEY_ECDSA) {
+                // ECDSA session key: [4 prefix][20 key][65+ sig]
+                if (signature.length < 89) return 0xffffffff;
+                
+                address sessionKey = address(bytes20(signature[4:24]));
+                SessionStorage storage ss = _sessionStorage();
+                SessionKeyPacked storage session = ss.ecdsaSessions[sessionKey];
+                
+                if (!_isSessionValid(session)) return 0xffffffff;
+                
+                // Verify signature using ECDSA
+                bytes calldata sig = signature[24:];
+                (address recovered, , ) = ECDSA.tryRecover(hash, sig);
+                if (recovered == sessionKey) {
+                    return 0x1626ba7e; // ERC1271_MAGIC_VALUE
+                }
+                return 0xffffffff;
+            } else if (sigType == SESSION_KEY_P256) {
+                // P256 session key: [4 prefix][32 keyX][32 keyY][64 sig (r,s)]
+                if (signature.length < 132) return 0xffffffff;
+                
+                bytes32 keyX = bytes32(signature[4:36]);
+                bytes32 keyY = bytes32(signature[36:68]);
+                bytes32 r = bytes32(signature[68:100]);
+                bytes32 s = bytes32(signature[100:132]);
+                
+                bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
+                SessionStorage storage ss = _sessionStorage();
+                SessionKeyPacked storage session = ss.p256Sessions[keyHash];
+                
+                if (!_isSessionValid(session)) return 0xffffffff;
+                
+                // Verify P256 signature
+                if (P256.verify(hash, r, s, keyX, keyY)) {
+                    return 0x1626ba7e; // ERC1271_MAGIC_VALUE
+                }
+                return 0xffffffff;
+            }
+        }
+        
+        // Default: owner signature
         if (_rawSignatureValidation(hash, signature)) {
-            return 0x1626ba7e; // ERC1271_MAGIC_VALUE
+            return 0x1626ba7e;
         }
         return 0xffffffff;
     }
+
+    // ============ View Functions ============
 
     /**
      * @dev Returns the EntryPoint address
@@ -197,21 +262,36 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
         return entryPoint().balanceOf(address(this));
     }
 
+    // ============ Internal Functions ============
+
+    /**
+     * @dev Override _validateUserOp to support session keys
+     */
+    function _validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) internal virtual override returns (uint256) {
+        // Check if this is a session key signature
+        if (userOp.signature.length > 4) {
+            bytes4 sigType = bytes4(userOp.signature[:4]);
+            if (sigType == SESSION_KEY_ECDSA || sigType == SESSION_KEY_P256) {
+                return _validateSessionKeySignature(userOpHash, userOp.signature, userOp.callData);
+            }
+        }
+        
+        // Default: owner signature validation
+        return _rawSignatureValidation(_signableUserOpHash(userOp, userOpHash), userOp.signature)
+            ? ERC4337Utils.SIG_VALIDATION_SUCCESS
+            : ERC4337Utils.SIG_VALIDATION_FAILED;
+    }
+
     /**
      * @dev Internal call helper
-     * @param target Target address
-     * @param value ETH value
-     * @param data Call data
      */
     function _call(address target, uint256 value, bytes memory data) internal {
         (bool success, bytes memory result) = target.call{ value: value }(data);
         if (!success) {
-            // The following assembly code is used to revert with the exact error message from the failed call
-            // This provides better debugging information than a generic revert
             assembly {
-                // result contains the length of the revert data in the first 32 bytes
-                // followed by the actual revert data
-                // revert(pointer to data, size of data)
                 revert(add(result, 32), mload(result))
             }
         }
@@ -222,5 +302,12 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      */
     function _onlyOwner() internal view {
         if (msg.sender != owner) revert Unauthorized();
+    }
+
+    /**
+     * @dev Implementation of SessionKeyManager's _requireOwner
+     */
+    function _requireOwner() internal view override {
+        _onlyOwner();
     }
 }
