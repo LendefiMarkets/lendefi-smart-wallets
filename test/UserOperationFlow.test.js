@@ -166,9 +166,9 @@ describe("UserOperation Flow Tests", function () {
             // Create signed user operation with wrong nonce
             const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x", 999);
             
-            // Should revert due to InvalidNonce
+            // Should revert due to invalid nonce (v0.7 uses FailedOp with AA25 error)
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
-                .to.be.revertedWithCustomError(entryPoint, "InvalidNonce");
+                .to.be.revertedWithCustomError(entryPoint, "FailedOp");
         });
 
         it("Should handle nonce key extraction correctly", async function () {
@@ -203,9 +203,9 @@ describe("UserOperation Flow Tests", function () {
             
             const userOp = await createSignedUserOperation(wallet, user1, entryPoint, user1.address, 0, "0x");
             
-            // Should revert due to InsufficientDeposit
+            // Should revert due to insufficient deposit (v0.7 uses FailedOp with AA21 error)
             await expect(entryPoint.connect(user1).handleOps([userOp], beneficiary.address))
-                .to.be.revertedWithCustomError(entryPoint, "InsufficientDeposit");
+                .to.be.revertedWithCustomError(entryPoint, "FailedOp");
         });
     });
 
@@ -333,15 +333,8 @@ describe("UserOperation Flow Tests", function () {
     });
 
     describe("Simulation", function () {
-        it("Should reject unauthorized simulation calls", async function () {
-            const { entryPoint, wallet, user1 } = await loadFixture(deployFullSystemFixture);
-            
-            const userOp = await createUserOperation(wallet, user1.address, 0, "0x");
-            
-            // Direct call should fail - only EntryPoint can call itself
-            await expect(entryPoint.connect(user1).innerExecuteCall(userOp))
-                .to.be.revertedWithCustomError(entryPoint, "UnauthorizedCaller");
-        });
+        // Note: innerExecuteCall test removed - function doesn't exist in v0.7 EntryPoint
+        // v0.7 uses simulateValidation and simulateHandleOp for simulation
 
         it("Should simulate execution with calldata", async function () {
             const { entryPoint, wallet, user1, user2, beneficiary } = await loadFixture(deployFullSystemFixture);

@@ -114,7 +114,7 @@ describe("EntryPoint", function () {
             await entryPoint.connect(user1).depositTo(user1.address, { value: depositAmount });
             
             await expect(entryPoint.connect(user1).withdrawTo(user1.address, withdrawAmount))
-                .to.be.revertedWithCustomError(entryPoint, "InsufficientDeposit");
+                .to.be.revertedWith("Withdraw amount too large");
         });
 
         it("Should allow withdrawal of zero amount (no-op)", async function () {
@@ -139,7 +139,9 @@ describe("EntryPoint", function () {
                 .to.emit(entryPoint, "StakeLocked")
                 .withArgs(user1.address, stakeAmount, unstakeDelay);
             
-            expect(await entryPoint.balanceOf(user1.address)).to.equal(stakeAmount);
+            // In v0.7, stake goes to stake field, not deposit
+            const depositInfo = await entryPoint.getDepositInfo(user1.address);
+            expect(depositInfo.stake).to.equal(stakeAmount);
         });
 
         it("Should handle unlocking stake", async function () {
@@ -184,7 +186,7 @@ describe("EntryPoint", function () {
             
             // Try to withdraw immediately
             await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.be.revertedWithCustomError(entryPoint, "StakeNotUnlocked");
+                .to.be.revertedWith("Stake withdrawal is not due");
         });
 
         it("Should reject withdrawal without unlocking first", async function () {
@@ -194,20 +196,17 @@ describe("EntryPoint", function () {
             await entryPoint.connect(user1).addStake(86400, { value: stakeAmount });
             
             await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.be.revertedWithCustomError(entryPoint, "StakeNotUnlocked");
+                .to.be.revertedWith("must call unlockStake() first");
         });
 
-        it("Should handle zero unstake delay (immediate withdrawal)", async function () {
+        it("Should reject zero unstake delay", async function () {
             const { entryPoint, user1 } = await loadFixture(deployFixture);
             
             const stakeAmount = ethers.parseEther("1");
             
-            await entryPoint.connect(user1).addStake(0, { value: stakeAmount });
-            await entryPoint.connect(user1).unlockStake();
-            
-            // Should be able to withdraw immediately with zero delay
-            await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.not.be.reverted;
+            // v0.7 requires unstakeDelay > 0
+            await expect(entryPoint.connect(user1).addStake(0, { value: stakeAmount }))
+                .to.be.revertedWith("must specify unstake delay");
         });
     });
 
@@ -217,9 +216,9 @@ describe("EntryPoint", function () {
             
             await entryPoint.connect(user1).depositTo(user1.address, { value: ethers.parseEther("1") });
             
-            // user2 cannot withdraw user1's funds
+            // user2 cannot withdraw user1's funds (they have no deposit)
             await expect(entryPoint.connect(user2).withdrawTo(user2.address, ethers.parseEther("0.5")))
-                .to.be.revertedWithCustomError(entryPoint, "InsufficientDeposit");
+                .to.be.revertedWith("Withdraw amount too large");
         });
 
         it("Should isolate stake operations per account", async function () {
@@ -227,16 +226,17 @@ describe("EntryPoint", function () {
             
             await entryPoint.connect(user1).addStake(86400, { value: ethers.parseEther("1") });
             
-            // user2 can manage their own stake (but has none)
+            // user2 cannot unlock without being staked first
             await expect(entryPoint.connect(user2).unlockStake())
-                .to.not.be.reverted; // Sets user2's unlock time
+                .to.be.revertedWith("not staked");
             
             // user2 cannot withdraw stake they don't have
             await expect(entryPoint.connect(user2).withdrawStake(user2.address))
-                .to.not.be.reverted; // No stake to withdraw, so no transfer occurs
+                .to.be.revertedWith("No stake to withdraw");
             
             // user1's stake remains unaffected
-            expect(await entryPoint.balanceOf(user1.address)).to.equal(ethers.parseEther("1"));
+            const depositInfo = await entryPoint.getDepositInfo(user1.address);
+            expect(depositInfo.stake).to.equal(ethers.parseEther("1"));
         });
     });
 
@@ -255,42 +255,37 @@ describe("EntryPoint", function () {
                 .to.not.be.reverted;
         });
 
-        it("Should reject simulation from unauthorized caller", async function () {
-            const { entryPoint, user1 } = await loadFixture(deployFixture);
+        // Note: innerExecuteCall doesn't exist in v0.7 EntryPoint
+        // Note: simulateValidation is in separate EntryPointSimulations contract in v0.7
+        it("Should have handleOps and handleAggregatedOps functions", async function () {
+            const { entryPoint } = await loadFixture(deployFixture);
             
-            const mockUserOp = {
-                sender: user1.address,
-                nonce: 0,
-                initCode: "0x",
-                callData: "0x",
-                accountGasLimits: "0x0000000000000000000000000000000000000000000000000000000000000000", // 32 bytes
-                preVerificationGas: 21000,
-                gasFees: "0x0000000000000000000000000000000000000000000000000000000000000000", // 32 bytes
-                paymasterAndData: "0x",
-                signature: "0x"
-            };
-            
-            await expect(entryPoint.connect(user1).innerExecuteCall(mockUserOp))
-                .to.be.revertedWithCustomError(entryPoint, "UnauthorizedCaller");
+            // v0.7 EntryPoint has handleOps and handleAggregatedOps for bundlers
+            expect(entryPoint.handleOps).to.exist;
+            expect(entryPoint.handleAggregatedOps).to.exist;
         });
     });
 
     describe("Nonce Management", function () {
-        it("Should return incremental nonces for same key", async function () {
+        it("Should return nonces with key encoding", async function () {
             const { entryPoint, user1 } = await loadFixture(deployFixture);
             
+            // v0.7 getNonce returns key << 64 | seq
+            // For key 0, seq 0: returns 0
+            // For key 1, seq 0: returns 1 << 64 = 18446744073709551616
             expect(await entryPoint.getNonce(user1.address, 0)).to.equal(0);
-            expect(await entryPoint.getNonce(user1.address, 1)).to.equal(0);
-            expect(await entryPoint.getNonce(user1.address, 255)).to.equal(0);
+            expect(await entryPoint.getNonce(user1.address, 1)).to.equal(BigInt(1) << 64n);
+            expect(await entryPoint.getNonce(user1.address, 255)).to.equal(BigInt(255) << 64n);
         });
 
         it("Should handle different nonce keys independently", async function () {
             const { entryPoint, user1, user2 } = await loadFixture(deployFixture);
             
+            // v0.7 getNonce encodes the key into the result
             expect(await entryPoint.getNonce(user1.address, 0)).to.equal(0);
-            expect(await entryPoint.getNonce(user1.address, 100)).to.equal(0);
+            expect(await entryPoint.getNonce(user1.address, 100)).to.equal(BigInt(100) << 64n);
             expect(await entryPoint.getNonce(user2.address, 0)).to.equal(0);
-            expect(await entryPoint.getNonce(user2.address, 100)).to.equal(0);
+            expect(await entryPoint.getNonce(user2.address, 100)).to.equal(BigInt(100) << 64n);
         });
     });
 
@@ -341,10 +336,9 @@ describe("EntryPoint", function () {
             const stakeAmount = ethers.parseEther("1");
             const unstakeDelay = 3600;
             
-            // Add stake
+            // Add stake - v0.7 only emits StakeLocked (not Deposited)
             await expect(entryPoint.connect(user1).addStake(unstakeDelay, { value: stakeAmount }))
-                .to.emit(entryPoint, "StakeLocked")
-                .and.to.emit(entryPoint, "Deposited");
+                .to.emit(entryPoint, "StakeLocked");
             
             // Unlock stake
             await expect(entryPoint.connect(user1).unlockStake())
@@ -386,22 +380,24 @@ describe("EntryPoint", function () {
             const { entryPoint, user1 } = await loadFixture(deployFixture);
             
             // Initially, accounts are not staked
-            const initialInfo = await entryPoint.deposits(user1.address);
+            const initialInfo = await entryPoint.getDepositInfo(user1.address);
             expect(initialInfo.staked).to.be.false;
             expect(initialInfo.stake).to.equal(0);
             
-            // Add sufficient stake
-            await entryPoint.connect(user1).addStake(0, { value: ethers.parseEther("1") });
+            // Add sufficient stake (v0.7 requires unstakeDelay > 0)
+            const unstakeDelay = 1; // minimum 1 second
+            await entryPoint.connect(user1).addStake(unstakeDelay, { value: ethers.parseEther("1") });
             
-            const stakedInfo = await entryPoint.deposits(user1.address);
+            const stakedInfo = await entryPoint.getDepositInfo(user1.address);
             expect(stakedInfo.staked).to.be.true;
             expect(stakedInfo.stake).to.equal(ethers.parseEther("1"));
             
             // Withdraw stake to make account unstaked again
             await entryPoint.connect(user1).unlockStake();
+            await time.increase(unstakeDelay + 1);
             await entryPoint.connect(user1).withdrawStake(user1.address);
             
-            const unstakedInfo = await entryPoint.deposits(user1.address);
+            const unstakedInfo = await entryPoint.getDepositInfo(user1.address);
             expect(unstakedInfo.staked).to.be.false;
             expect(unstakedInfo.stake).to.equal(0);
         });

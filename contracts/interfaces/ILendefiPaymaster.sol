@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-// Custom errors for Lendefi Paymaster
+// Custom errors for LendefiPaymaster
 error NotFromEntryPoint();
 error InvalidWallet();
 error InvalidTier();

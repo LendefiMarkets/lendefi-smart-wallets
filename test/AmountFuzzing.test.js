@@ -16,7 +16,8 @@ describe("Amount Parameter Fuzzing", function () {
             [entryPoint.target, owner.address, ethers.ZeroAddress],
             { 
                 initializer: 'initialize',
-                unsafeAllow: ['constructor']
+                unsafeAllow: ['constructor'],
+                silenceWarnings: true
             }
         );
         
@@ -89,7 +90,7 @@ describe("Amount Parameter Fuzzing", function () {
             
             // Try to withdraw 1 wei more than balance
             await expect(entryPoint.connect(user1).withdrawTo(user1.address, depositAmount + 1n))
-                .to.be.revertedWithCustomError(entryPoint, "InsufficientDeposit");
+                .to.be.revertedWith("Withdraw amount too large");
         });
 
         it("Should handle exact balance withdrawal", async function () {
@@ -107,11 +108,13 @@ describe("Amount Parameter Fuzzing", function () {
         it("Should handle minimum stake amount", async function () {
             const { entryPoint, user1 } = await loadFixture(deploySystemFixture);
             
-            // Test 1 wei stake
-            await expect(entryPoint.connect(user1).addStake(0, { value: 1 }))
+            // Test 1 wei stake with required unstakeDelay > 0
+            await expect(entryPoint.connect(user1).addStake(1, { value: 1 }))
                 .to.not.be.reverted;
             
-            expect(await entryPoint.balanceOf(user1.address)).to.equal(1);
+            // In v0.7, stake goes to stake field not deposit
+            const depositInfo = await entryPoint.getDepositInfo(user1.address);
+            expect(depositInfo.stake).to.equal(1);
         });
     });
 
@@ -257,19 +260,19 @@ describe("Amount Parameter Fuzzing", function () {
     });
 
     describe("Factory Amount Edge Cases", function () {
-        it("Should handle zero value stake operations", async function () {
+        it("Should reject zero unstake delay", async function () {
             const { factory, owner } = await loadFixture(deploySystemFixture);
             
-            // Zero stake should work
+            // v0.7 requires unstakeDelay > 0
             await expect(factory.connect(owner).addStake(0, { value: 0 }))
-                .to.not.be.reverted;
+                .to.be.revertedWith("must specify unstake delay");
         });
 
         it("Should handle minimum stake operations", async function () {
             const { factory, owner } = await loadFixture(deploySystemFixture);
             
-            // 1 wei stake
-            await expect(factory.connect(owner).addStake(0, { value: 1 }))
+            // 1 wei stake with required unstakeDelay > 0
+            await expect(factory.connect(owner).addStake(1, { value: 1 }))
                 .to.not.be.reverted;
         });
     });

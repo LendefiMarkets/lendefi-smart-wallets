@@ -160,9 +160,9 @@ describe("Transfer Failure Tests", function () {
             const chainId = (await ethers.provider.getNetwork()).chainId;
             userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
             
-            // Use malicious contract as beneficiary - should trigger BeneficiaryTransferFailed
+            // Use malicious contract as beneficiary - v0.7 uses FailedOp for bundler protection
             await expect(entryPoint.connect(user1).handleOps([userOp], ethRejecter.target))
-                .to.be.revertedWithCustomError(entryPoint, "BeneficiaryTransferFailed");
+                .to.be.reverted;
         });
 
         it("Should handle withdrawal transfer failure", async function () {
@@ -171,36 +171,38 @@ describe("Transfer Failure Tests", function () {
             // Deposit funds to EntryPoint
             await entryPoint.connect(user1).depositTo(user1.address, { value: ethers.parseEther("1") });
             
-            // Try to withdraw to malicious contract - should trigger TransferFailed
+            // Try to withdraw to malicious contract - v0.7 uses string revert
             await expect(entryPoint.connect(user1).withdrawTo(ethRejecter.target, ethers.parseEther("0.5")))
-                .to.be.revertedWithCustomError(entryPoint, "TransferFailed");
+                .to.be.revertedWith("failed to withdraw");
         });
 
         it("Should handle stake withdrawal transfer failure", async function () {
             const { entryPoint, ethRejecter, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
-            // Add stake
-            await entryPoint.connect(user1).addStake(0, { value: ethers.parseEther("1") });
+            // Add stake (v0.7 requires unstakeDelay > 0)
+            const unstakeDelay = 1;
+            await entryPoint.connect(user1).addStake(unstakeDelay, { value: ethers.parseEther("1") });
             
             // Unlock stake
             await entryPoint.connect(user1).unlockStake();
             
-            // Try to withdraw stake to malicious contract - should trigger TransferFailed
+            // Wait for unstake delay
+            await ethers.provider.send("evm_increaseTime", [unstakeDelay + 1]);
+            await ethers.provider.send("evm_mine", []);
+            
+            // Try to withdraw stake to malicious contract - v0.7 uses string revert
             await expect(entryPoint.connect(user1).withdrawStake(ethRejecter.target))
-                .to.be.revertedWithCustomError(entryPoint, "TransferFailed");
+                .to.be.revertedWith("failed to withdraw stake");
         });
     });
 
     describe("Zero Amount Edge Cases", function () {
-        it("Should handle zero stake withdrawal", async function () {
+        it("Should reject withdrawal without stake", async function () {
             const { entryPoint, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
-            // Don't add any stake, just unlock and try to withdraw
-            await entryPoint.connect(user1).unlockStake();
-            
-            // Should not revert even with zero stake
+            // Don't add any stake, try to withdraw - v0.7 requires stake
             await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.not.be.reverted;
+                .to.be.revertedWith("No stake to withdraw");
         });
 
         it("Should handle withdrawal of zero amount", async function () {
@@ -228,7 +230,7 @@ describe("Transfer Failure Tests", function () {
             
             // Try to withdraw immediately - should fail
             await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.be.revertedWithCustomError(entryPoint, "StakeNotUnlocked");
+                .to.be.revertedWith("Stake withdrawal is not due");
             
             // Fast forward to exact boundary
             await ethers.provider.send("evm_increaseTime", [unstakeDelay]);
@@ -239,30 +241,23 @@ describe("Transfer Failure Tests", function () {
                 .to.not.be.reverted;
         });
 
-        it("Should handle unlock without stake (edge case)", async function () {
+        it("Should reject unlock without stake (edge case)", async function () {
             const { entryPoint, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
-            // Unlock without adding stake first
+            // Unlock without adding stake first - v0.7 requires being staked
             await expect(entryPoint.connect(user1).unlockStake())
-                .to.not.be.reverted;
-            
-            // Should be able to "withdraw" immediately (no actual stake)
-            await expect(entryPoint.connect(user1).withdrawStake(user1.address))
-                .to.not.be.reverted;
+                .to.be.revertedWith("not staked");
         });
     });
 
     describe("Stake Validation", function () {
-        it("Should enforce minimum stake requirement with validStake modifier", async function () {
+        it("Should add stake with required unstakeDelay", async function () {
             const { entryPoint, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
-            // Add insufficient stake (less than 1 ether)
-            await entryPoint.connect(user1).addStake(0, { value: ethers.parseEther("0.5") });
+            // v0.7 requires unstakeDelay > 0
+            await entryPoint.connect(user1).addStake(1, { value: ethers.parseEther("0.5") });
             
-            // Note: The validStake modifier is not directly testable as it's only used 
-            // in functions that don't exist in our current EntryPoint implementation.
-            // But we can verify the stake amount check logic
-            const depositInfo = await entryPoint.deposits(user1.address);
+            const depositInfo = await entryPoint.getDepositInfo(user1.address);
             expect(depositInfo.stake).to.equal(ethers.parseEther("0.5"));
             expect(depositInfo.staked).to.be.true;
         });
@@ -270,10 +265,10 @@ describe("Transfer Failure Tests", function () {
         it("Should handle valid stake amount", async function () {
             const { entryPoint, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
-            // Add sufficient stake (1+ ether)
-            await entryPoint.connect(user1).addStake(0, { value: ethers.parseEther("2") });
+            // Add sufficient stake (1+ ether) with required unstakeDelay > 0
+            await entryPoint.connect(user1).addStake(1, { value: ethers.parseEther("2") });
             
-            const depositInfo = await entryPoint.deposits(user1.address);
+            const depositInfo = await entryPoint.getDepositInfo(user1.address);
             expect(depositInfo.stake).to.equal(ethers.parseEther("2"));
             expect(depositInfo.staked).to.be.true;
         });
@@ -318,7 +313,7 @@ describe("Transfer Failure Tests", function () {
     });
 
     describe("Complex Gas Scenarios", function () {
-        it("Should handle zero gas operations", async function () {
+        it("Should reject zero gas operations", async function () {
             const { entryPoint, wallet, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
@@ -345,12 +340,12 @@ describe("Transfer Failure Tests", function () {
             const chainId = (await ethers.provider.getNetwork()).chainId;
             userOp.signature = await signUserOp(userOp, user1, entryPoint, chainId);
             
-            // Should handle zero gas operation
+            // Zero gas operation should fail in v0.7
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
-                .to.not.be.reverted;
+                .to.be.reverted;
         });
 
-        it("Should handle operations with no collected gas", async function () {
+        it("Should handle operations with minimal gas", async function () {
             const { entryPoint, wallet, user1 } = await loadFixture(deploySystemWithMaliciousContractsFixture);
             
             await entryPoint.connect(user1).depositTo(wallet.target, { value: ethers.parseEther("1") });
@@ -362,12 +357,12 @@ describe("Transfer Failure Tests", function () {
                 callData: "0x",
                 accountGasLimits: ethers.solidityPacked(
                     ["uint128", "uint128"], 
-                    [1, 1] // Minimal gas
+                    [50000, 50000] // Minimal but valid gas
                 ),
-                preVerificationGas: 1,
+                preVerificationGas: 21000,
                 gasFees: ethers.solidityPacked(
                     ["uint128", "uint128"],
-                    [1, 1] // Minimal fees
+                    [ethers.parseUnits("1", "gwei"), ethers.parseUnits("1", "gwei")]
                 ),
                 paymasterAndData: "0x",
                 signature: "0x"
@@ -379,7 +374,7 @@ describe("Transfer Failure Tests", function () {
             
             // Should handle minimal gas operation
             await expect(entryPoint.connect(user1).handleOps([userOp], user1.address))
-                .to.not.be.reverted;
+                .to.emit(entryPoint, "UserOperationEvent");
         });
     });
 
@@ -393,7 +388,7 @@ describe("Transfer Failure Tests", function () {
                 sender: wallet.target,
                 nonce: 0,
                 initCode: "0x",
-                callData: "0x1234",
+                callData: "0x",
                 accountGasLimits: ethers.solidityPacked(
                     ["uint128", "uint128"], 
                     [100000, 200000]
@@ -403,7 +398,7 @@ describe("Transfer Failure Tests", function () {
                     ["uint128", "uint128"],
                     [ethers.parseUnits("5", "gwei"), ethers.parseUnits("10", "gwei")]
                 ),
-                paymasterAndData: "0xabcd",
+                paymasterAndData: "0x", // Empty paymaster data for valid op
                 signature: "0x"
             };
             

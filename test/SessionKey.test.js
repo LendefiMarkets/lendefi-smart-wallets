@@ -1131,6 +1131,31 @@ describe("Session Key Tests", function () {
         });
 
         describe("P256 Session Execution via EntryPoint", function () {
+            // Helper to create user op with higher gas for P256 verification (Solidity fallback is expensive)
+            async function createP256UserOp(wallet, callData, nonce = null) {
+                if (nonce === null) {
+                    nonce = await wallet["getNonce()"]();
+                }
+                
+                return {
+                    sender: wallet.target,
+                    nonce: nonce,
+                    initCode: "0x",
+                    callData: callData,
+                    accountGasLimits: ethers.solidityPacked(
+                        ["uint128", "uint128"], 
+                        [1000000, 500000]  // Higher verificationGasLimit for P256 Solidity verification
+                    ),
+                    preVerificationGas: 100000,
+                    gasFees: ethers.solidityPacked(
+                        ["uint128", "uint128"],
+                        [ethers.parseUnits("10", "gwei"), ethers.parseUnits("10", "gwei")]
+                    ),
+                    paymasterAndData: "0x",
+                    signature: "0x"
+                };
+            }
+
             it("Should execute call with P256 session key", async function () {
                 const { wallet, mockTarget, user1, entryPoint } = await loadFixture(deploySystemFixture);
                 
@@ -1151,8 +1176,8 @@ describe("Session Key Tests", function () {
                     setValueCall
                 ]);
 
-                // Create user op
-                const userOp = await createUserOp(wallet, executeCall);
+                // Create user op with higher gas limits for P256
+                const userOp = await createP256UserOp(wallet, executeCall);
                 
                 // Calculate userOpHash
                 const network = await ethers.provider.getNetwork();

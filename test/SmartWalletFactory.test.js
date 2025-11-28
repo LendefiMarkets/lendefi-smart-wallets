@@ -309,11 +309,16 @@ describe("SmartWalletFactory", function () {
             await expect(factory.addStake(unstakeDelay, { value: stakeAmount }))
                 .to.not.be.reverted;
             
-            expect(await entryPoint.balanceOf(factory.target)).to.equal(stakeAmount);
+            // In v0.7, balanceOf returns deposit, not stake. Use getDepositInfo for stake
+            const depositInfo = await entryPoint.getDepositInfo(factory.target);
+            expect(depositInfo.stake).to.equal(stakeAmount);
         });
 
         it("Should unlock stake", async function () {
             const { factory } = await loadFixture(deployFixture);
+            
+            // In v0.7, must add stake first before unlocking (requires unstakeDelaySec > 0)
+            await factory.addStake(86400, { value: ethers.parseEther("0.1") });
             
             await expect(factory.unlockStake()).to.not.be.reverted;
         });

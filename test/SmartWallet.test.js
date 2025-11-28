@@ -338,9 +338,9 @@ describe("SmartWallet", function () {
         it("Should handle missing account funds gracefully", async function () {
             const { smartWallet, entryPoint, owner, user1 } = await loadFixture(deployFixture);
             
-            // Try to withdraw more than deposited
+            // Try to withdraw more than deposited (v0.7 uses string revert)
             await expect(smartWallet.connect(owner).withdrawDepositTo(user1.address, ethers.parseEther("10")))
-                .to.be.revertedWithCustomError(entryPoint, "InsufficientDeposit");
+                .to.be.revertedWith("Withdraw amount too large");
         });
     });
 

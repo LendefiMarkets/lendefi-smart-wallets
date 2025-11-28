@@ -78,11 +78,13 @@ describe("LendefiPaymaster", function () {
             const { entryPoint, factory } = await loadFixture(deployFixture);
             const LendefiPaymaster = await ethers.getContractFactory("LendefiPaymaster");
             
+            // Zero EntryPoint - BasePaymaster checks interface
             await expect(LendefiPaymaster.deploy(ethers.ZeroAddress, factory.target))
-                .to.be.revertedWithCustomError(LendefiPaymaster, "InvalidUser");
+                .to.be.reverted;
             
+            // Zero factory - our custom ZeroAddress error
             await expect(LendefiPaymaster.deploy(entryPoint.target, ethers.ZeroAddress))
-                .to.be.revertedWithCustomError(LendefiPaymaster, "InvalidUser");
+                .to.be.revertedWithCustomError(LendefiPaymaster, "ZeroAddress");
         });
 
         it("Should set owner as authorized operator during deployment", async function () {
@@ -118,7 +120,7 @@ describe("LendefiPaymaster", function () {
             
             // Zero address
             await expect(paymaster.connect(owner).grantSubscription(ethers.ZeroAddress, SubscriptionTier.BASIC, 3600))
-                .to.be.revertedWithCustomError(paymaster, "InvalidUser");
+                .to.be.revertedWithCustomError(paymaster, "ZeroAddress");
             
             // NONE tier
             await expect(paymaster.connect(owner).grantSubscription(owner.address, SubscriptionTier.NONE, 3600))
@@ -205,7 +207,7 @@ describe("LendefiPaymaster", function () {
             const { paymaster, owner } = await loadFixture(deployFixture);
             
             await expect(paymaster.connect(owner).addAuthorizedOperator(ethers.ZeroAddress))
-                .to.be.revertedWithCustomError(paymaster, "InvalidUser");
+                .to.be.revertedWithCustomError(paymaster, "ZeroAddress");
         });
 
         it("Should reject unauthorized calls to owner-only functions", async function () {
@@ -309,7 +311,7 @@ describe("LendefiPaymaster", function () {
             const maxCost = ethers.parseEther("0.01");
             
             await expect(paymaster.connect(user1).validatePaymasterUserOp(userOp, userOpHash, maxCost))
-                .to.be.revertedWithCustomError(paymaster, "NotFromEntryPoint");
+                .to.be.revertedWith("Sender not EntryPoint");
         });
 
         it("Should reject validation for expired subscription", async function () {
@@ -442,7 +444,7 @@ describe("LendefiPaymaster", function () {
             );
             
             await expect(paymaster.connect(user1).postOp(0, context, ethers.parseEther("0.01"), ethers.parseUnits("10", "gwei")))
-                .to.be.revertedWithCustomError(paymaster, "NotFromEntryPoint");
+                .to.be.revertedWith("Sender not EntryPoint");
         });
     });
 
@@ -456,11 +458,13 @@ describe("LendefiPaymaster", function () {
             expect(await entryPoint.balanceOf(paymaster.target)).to.be.gt(depositAmount);
         });
 
-        it("Should reject unauthorized deposit attempts", async function () {
-            const { paymaster, unauthorized } = await loadFixture(deployFixture);
+        it("Should allow anyone to deposit", async function () {
+            const { paymaster, unauthorized, entryPoint } = await loadFixture(deployFixture);
             
-            await expect(paymaster.connect(unauthorized).deposit({ value: ethers.parseEther("1") }))
-                .to.be.revertedWithCustomError(paymaster, "Unauthorized");
+            // BasePaymaster allows anyone to deposit (funds go to EntryPoint)
+            const depositAmount = ethers.parseEther("1");
+            await paymaster.connect(unauthorized).deposit({ value: depositAmount });
+            expect(await entryPoint.balanceOf(paymaster.target)).to.be.gte(depositAmount);
         });
 
         it("Should allow authorized operators to deposit", async function () {
@@ -498,7 +502,15 @@ describe("LendefiPaymaster", function () {
         it("Should unlock and withdraw stake", async function () {
             const { paymaster, owner } = await loadFixture(deployFixture);
             
+            // In v0.7, must add stake first before unlocking (requires unstakeDelaySec > 0)
+            await paymaster.connect(owner).addStake(86400, { value: ethers.parseEther("1") });
+            
             await expect(paymaster.connect(owner).unlockStake()).to.not.be.reverted;
+            
+            // Fast forward time to pass unstake delay
+            await network.provider.send("evm_increaseTime", [86401]);
+            await network.provider.send("evm_mine");
+            
             await expect(paymaster.connect(owner).withdrawStake(owner.address)).to.not.be.reverted;
         });
 
@@ -674,20 +686,17 @@ describe("LendefiPaymaster", function () {
         });
     });
 
-    describe("Receive Function", function () {
-        it("Should accept ETH deposits", async function () {
-            const { paymaster, user1 } = await loadFixture(deployFixture);
+    describe("Deposit Function", function () {
+        it("Should deposit to EntryPoint via deposit()", async function () {
+            const { paymaster, user1, entryPoint } = await loadFixture(deployFixture);
             
-            const sendAmount = ethers.parseEther("1");
-            const initialBalance = await ethers.provider.getBalance(paymaster.target);
+            const depositAmount = ethers.parseEther("1");
+            const initialBalance = await entryPoint.balanceOf(paymaster.target);
             
-            await user1.sendTransaction({
-                to: paymaster.target,
-                value: sendAmount
-            });
+            await paymaster.connect(user1).deposit({ value: depositAmount });
             
-            const finalBalance = await ethers.provider.getBalance(paymaster.target);
-            expect(finalBalance - initialBalance).to.equal(sendAmount);
+            const finalBalance = await entryPoint.balanceOf(paymaster.target);
+            expect(finalBalance - initialBalance).to.equal(depositAmount);
         });
     });
 });
