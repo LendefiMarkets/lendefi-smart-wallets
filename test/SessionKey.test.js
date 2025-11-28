@@ -658,40 +658,55 @@ describe("Session Key Tests", function () {
     });
 
     describe("Sensitive Function Protection", function () {
-        it("Should block session key from calling changeOwner", async function () {
-            const { entryPoint, wallet, user1, sessionKeySigner, beneficiary, user2 } = await loadFixture(deploySystemFixture);
+        it("Should block session key creation with wallet itself as target", async function () {
+            const { wallet, user1, sessionKeySigner } = await loadFixture(deploySystemFixture);
             
-            // Create session (allowing wallet itself as target won't help)
+            // Session keys cannot target the wallet itself (prevents calling sensitive functions)
             const config = await createSessionConfig(
                 sessionKeySigner.address,
-                [wallet.target],
+                [wallet.target], // This is now blocked
+                []
+            );
+            
+            await expect(wallet.connect(user1).createSession(config))
+                .to.be.revertedWithCustomError(wallet, "CannotTargetSelf");
+        });
+
+        it("Should block session key from calling changeOwner via nested execute", async function () {
+            const { entryPoint, wallet, mockTarget, user1, sessionKeySigner, beneficiary, user2 } = await loadFixture(deploySystemFixture);
+            
+            // Create session with mock target only
+            const config = await createSessionConfig(
+                sessionKeySigner.address,
+                [mockTarget.target],
                 []
             );
             await wallet.connect(user1).createSession(config);
             
-            // Try to call changeOwner
+            // Try to call changeOwner directly (not allowed - mockTarget is the only target)
             const callData = wallet.interface.encodeFunctionData("changeOwner", [user2.address]);
             
             const userOp = await createUserOp(wallet, callData);
             const chainId = (await ethers.provider.getNetwork()).chainId;
             userOp.signature = await signUserOpWithSessionKey(userOp, sessionKeySigner, entryPoint, chainId);
             
+            // Should revert because wallet is not in allowed targets
             await expect(entryPoint.handleOps([userOp], beneficiary.address))
                 .to.be.reverted;
         });
 
-        it("Should block session key from calling createSession", async function () {
+        it("Should block session key from calling createSession via nested execute", async function () {
             const { entryPoint, wallet, mockTarget, user1, sessionKeySigner, beneficiary, user2 } = await loadFixture(deploySystemFixture);
             
-            // Create session
+            // Create session with mock target only
             const config = await createSessionConfig(
                 sessionKeySigner.address,
-                [wallet.target],
+                [mockTarget.target],
                 []
             );
             await wallet.connect(user1).createSession(config);
             
-            // Try to create another session
+            // Try to create another session (not allowed - wallet is not a target)
             const newSessionConfig = {
                 key: user2.address,
                 validAfter: 0,
@@ -712,17 +727,17 @@ describe("Session Key Tests", function () {
                 .to.be.reverted;
         });
 
-        it("Should block session key from calling withdrawDepositTo", async function () {
-            const { entryPoint, wallet, user1, sessionKeySigner, beneficiary } = await loadFixture(deploySystemFixture);
+        it("Should block session key from calling withdrawDepositTo via nested execute", async function () {
+            const { entryPoint, wallet, mockTarget, user1, sessionKeySigner, beneficiary } = await loadFixture(deploySystemFixture);
             
             const config = await createSessionConfig(
                 sessionKeySigner.address,
-                [wallet.target],
+                [mockTarget.target],
                 []
             );
             await wallet.connect(user1).createSession(config);
             
-            // Try to withdraw
+            // Try to withdraw (not allowed - wallet is not a target)
             const callData = wallet.interface.encodeFunctionData("withdrawDepositTo", [
                 beneficiary.address,
                 ethers.parseEther("0.1")

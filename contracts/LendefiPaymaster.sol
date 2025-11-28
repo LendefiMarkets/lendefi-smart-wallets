@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity 0.8.23;
 
 import { BasePaymaster } from "./aa-v07/contracts/core/BasePaymaster.sol";
 import { IEntryPoint } from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
@@ -80,6 +80,7 @@ contract LendefiPaymaster is BasePaymaster {
     event OperatorRemoved(address indexed operator);
     event TierLimitUpdated(SubscriptionTier tier, uint256 oldLimit, uint256 newLimit);
     event MaxGasPerOperationUpdated(uint256 oldLimit, uint256 newLimit);
+    event MonthlyGasReset(address indexed user);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -141,8 +142,12 @@ contract LendefiPaymaster is BasePaymaster {
         uint256 subsidy = (maxCost * _getSubsidyPercentage(sub.tier)) / 100;
         if (entryPoint.balanceOf(address(this)) < subsidy) revert PaymasterDepositTooLow();
 
-        // Return context for postOp
-        context = abi.encode(wallet, estimatedGas, subsidy, sub.tier);
+        // Pre-deduct gas for atomic accounting (prevents free gas on reverts)
+        uint256 gasUsedBefore = sub.gasUsedThisMonth;
+        sub.gasUsedThisMonth += estimatedGas;
+
+        // Return context for postOp (includes previous usage for potential refund)
+        context = abi.encode(wallet, estimatedGas, gasUsedBefore, sub.tier);
         validationData = 0; // Valid with no time restrictions
     }
 
@@ -155,15 +160,16 @@ contract LendefiPaymaster is BasePaymaster {
         uint256 actualGasCost,
         uint256 /*actualUserOpFeePerGas*/
     ) internal override {
-        if (mode == PostOpMode.postOpReverted) return;
-
-        (address wallet, uint256 estimatedGas, , SubscriptionTier tier) = 
+        (address wallet, uint256 estimatedGas, uint256 gasUsedBefore, SubscriptionTier tier) = 
             abi.decode(context, (address, uint256, uint256, SubscriptionTier));
 
-        // Update usage
-        subscriptions[wallet].gasUsedThisMonth += estimatedGas;
+        if (mode == PostOpMode.postOpReverted) {
+            // Refund pre-deducted gas on revert
+            subscriptions[wallet].gasUsedThisMonth = gasUsedBefore;
+            return;
+        }
 
-        // Calculate sponsored amount
+        // Gas was already deducted in validation, emit event with actual cost
         uint256 sponsored = (actualGasCost * _getSubsidyPercentage(tier)) / 100;
         emit GasSubsidized(wallet, estimatedGas, sponsored, tier);
     }
@@ -211,6 +217,7 @@ contract LendefiPaymaster is BasePaymaster {
     function resetMonthlyGasUsage(address user) external onlyAuthorized {
         subscriptions[user].gasUsedThisMonth = 0;
         subscriptions[user].lastResetTime = uint48(block.timestamp);
+        emit MonthlyGasReset(user);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

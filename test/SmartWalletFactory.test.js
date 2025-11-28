@@ -131,7 +131,7 @@ describe("SmartWalletFactory", function () {
         it("Should reject createAccount from non-owner", async function () {
             const { factory, user1, user2 } = await loadFixture(deployFixture);
             
-            // Test onlyOwner modifier on createAccount
+            // Only owner can create accounts (permissioned factory design)
             await expect(factory.connect(user1).createAccount(user2.address, 123))
                 .to.be.revertedWithCustomError(factory, "OwnableUnauthorizedAccount");
         });

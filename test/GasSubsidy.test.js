@@ -102,7 +102,11 @@ describe("Gas Subsidy End-to-End Tests", function () {
         });
         const entryPointSigner = await ethers.getSigner(entryPoint.target);
 
-        // Step 1: Validate paymaster operation
+        // Get subscription before validation to track gasUsedBefore
+        const subBefore = await paymaster.getSubscription(userOp.sender);
+        const gasUsedBefore = subBefore.gasUsedThisMonth;
+
+        // Step 1: Validate paymaster operation (this now pre-deducts gas)
         const userOpHash = ethers.keccak256(ethers.toUtf8Bytes("userOpHash"));
         const maxCost = ethers.parseEther("0.1");
 
@@ -117,10 +121,11 @@ describe("Gas Subsidy End-to-End Tests", function () {
         const gasPrice = ethers.parseUnits("15", "gwei");
         const actualGasCost = actualGasUsed * gasPrice;
 
-        // Create context manually to match the contract's encoding
+        // Create context manually to match the contract's new encoding
+        // New format: (address wallet, uint256 estimatedGas, uint256 gasUsedBefore, SubscriptionTier tier)
         const context = ethers.AbiCoder.defaultAbiCoder().encode(
             ["address", "uint256", "uint256", "uint8"],
-            [userOp.sender, expectedGasUsed, actualGasCost, 1] // Assume BASIC tier for simplicity
+            [userOp.sender, expectedGasUsed, gasUsedBefore, 1] // gasUsedBefore from before validation
         );
 
         const tx = await paymaster.connect(entryPointSigner).postOp(
@@ -358,19 +363,21 @@ describe("Gas Subsidy End-to-End Tests", function () {
     });
 
     describe("Gas Subsidy Edge Cases", function () {
-        it("Should handle zero gas operations", async function () {
+        it("Should handle minimum gas operations", async function () {
             const { paymaster, entryPoint, owner, user1, wallet1 } = await loadFixture(deployGasSubsidyFixture);
 
             await paymaster.connect(owner).grantSubscription(wallet1, SubscriptionTier.BASIC, 3600);
 
+            // Even with 0 requested, createUserOperation enforces minimum gas (51000)
             const userOp = createUserOperation(wallet1, 0, "0x", 0);
             const { tx } = await simulateGasSubsidy(paymaster, entryPoint, userOp, 0n, owner);
 
-            // Should still emit event even for zero gas
+            // Should still emit event
             await expect(tx).to.emit(paymaster, "GasSubsidized");
 
             const subscription = await paymaster.getSubscription(wallet1);
-            expect(subscription.gasUsedThisMonth).to.equal(0);
+            // Minimum gas from userOp: 50000 preVerification + 500 verification + 500 call = 51000
+            expect(subscription.gasUsedThisMonth).to.equal(51000);
         });
 
         it("Should handle maximum gas limit operations", async function () {
@@ -379,15 +386,16 @@ describe("Gas Subsidy End-to-End Tests", function () {
             // Grant ULTIMATE subscription (10M gas limit)
             await paymaster.connect(owner).grantSubscription(wallet3, SubscriptionTier.ULTIMATE, 3600);
 
-            // Use exactly the monthly limit
-            const maxGas = 10000000n;
-            const userOp = createUserOperation(wallet3, 0, "0x", Number(maxGas));
+            // createUserOperation caps gas at 450000 (50K preVerification + 400K remaining)
+            // This tests using the maximum allowed by the helper function
+            const maxGasFromHelper = 450000n;
+            const userOp = createUserOperation(wallet3, 0, "0x", Number(maxGasFromHelper));
             
-            const { tx } = await simulateGasSubsidy(paymaster, entryPoint, userOp, maxGas, owner);
+            const { tx } = await simulateGasSubsidy(paymaster, entryPoint, userOp, maxGasFromHelper, owner);
             await expect(tx).to.emit(paymaster, "GasSubsidized");
 
             const subscription = await paymaster.getSubscription(wallet3);
-            expect(subscription.gasUsedThisMonth).to.equal(maxGas);
+            expect(subscription.gasUsedThisMonth).to.equal(maxGasFromHelper);
         });
 
         it("Should handle subscription expiration during operation", async function () {
@@ -430,17 +438,18 @@ describe("Gas Subsidy End-to-End Tests", function () {
             await paymaster.connect(owner).grantSubscription(wallet2, SubscriptionTier.PREMIUM, 3600);
 
             const operationCount = 10;
-            const gasPerOp = 50000n;
+            // createUserOperation enforces minimum of 51000 (50K preVerification + 500 + 500)
+            const minGasPerOp = 51000n;
             
             // Execute multiple operations rapidly
             for (let i = 0; i < operationCount; i++) {
-                const userOp = createUserOperation(wallet2, i, "0x", Number(gasPerOp));
-                await simulateGasSubsidy(paymaster, entryPoint, userOp, gasPerOp, owner);
+                const userOp = createUserOperation(wallet2, i, "0x", Number(minGasPerOp));
+                await simulateGasSubsidy(paymaster, entryPoint, userOp, minGasPerOp, owner);
             }
 
             // Verify total gas tracking
             const subscription = await paymaster.getSubscription(wallet2);
-            expect(subscription.gasUsedThisMonth).to.equal(gasPerOp * BigInt(operationCount));
+            expect(subscription.gasUsedThisMonth).to.equal(minGasPerOp * BigInt(operationCount));
         });
 
         it("Should maintain accuracy under concurrent operations", async function () {

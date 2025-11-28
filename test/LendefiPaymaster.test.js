@@ -638,6 +638,10 @@ describe("LendefiPaymaster", function () {
             // Grant subscription to wallet address
             await paymaster.connect(owner).grantSubscription(walletAddress, SubscriptionTier.BASIC, 90 * 24 * 60 * 60); // 90 days
             
+            // Record the initial lastResetTime
+            const initialSub = await paymaster.getSubscription(walletAddress);
+            const initialResetTime = initialSub.lastResetTime;
+            
             // Advance time by 31 days to trigger automatic reset
             await time.increase(31 * 24 * 60 * 60);
             
@@ -657,7 +661,11 @@ describe("LendefiPaymaster", function () {
             await paymaster.connect(entryPointSigner).validatePaymasterUserOp(userOp, userOpHash, maxCost);
             
             const subscription = await paymaster.getSubscription(walletAddress);
-            expect(subscription.gasUsedThisMonth).to.equal(0);
+            // Reset happened - lastResetTime should be updated
+            expect(subscription.lastResetTime).to.be.greaterThan(initialResetTime);
+            // gasUsedThisMonth should only contain the current op's gas (pre-deducted in atomic accounting)
+            // 100000 + 100000 + 50000 = 250000
+            expect(subscription.gasUsedThisMonth).to.equal(250000);
         });
 
         it("Should handle invalid subscription tier in gas limit calculation", async function () {

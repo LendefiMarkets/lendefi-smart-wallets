@@ -105,11 +105,17 @@ abstract contract SessionKeyManager {
         mapping(address => SessionKeyPacked) ecdsaSessions;
         mapping(address => address[]) ecdsaAllowedTargets;
         mapping(address => bytes4[]) ecdsaAllowedSelectors;
+        // O(1) lookups for ECDSA sessions
+        mapping(address => mapping(address => bool)) ecdsaTargetAllowed;
+        mapping(address => mapping(bytes4 => bool)) ecdsaSelectorAllowed;
         
         // For P256 sessions: keccak256(keyX, keyY) => session
         mapping(bytes32 => SessionKeyPacked) p256Sessions;
         mapping(bytes32 => address[]) p256AllowedTargets;
         mapping(bytes32 => bytes4[]) p256AllowedSelectors;
+        // O(1) lookups for P256 sessions
+        mapping(bytes32 => mapping(address => bool)) p256TargetAllowed;
+        mapping(bytes32 => mapping(bytes4 => bool)) p256SelectorAllowed;
     }
 
     // ============ Constants ============
@@ -187,6 +193,7 @@ abstract contract SessionKeyManager {
     error InvalidSessionSignature();
     error InvalidSignatureType();
     error CannotCallSensitiveFunction();
+    error CannotTargetSelf();
 
     // ============ Storage Access ============
 
@@ -409,6 +416,17 @@ abstract contract SessionKeyManager {
         ss.ecdsaAllowedTargets[config.key] = config.allowedTargets;
         ss.ecdsaAllowedSelectors[config.key] = config.allowedSelectors;
 
+        // Populate O(1) lookup mappings and check for self-targeting
+        for (uint256 i = 0; i < config.allowedTargets.length; ) {
+            if (config.allowedTargets[i] == address(this)) revert CannotTargetSelf();
+            ss.ecdsaTargetAllowed[config.key][config.allowedTargets[i]] = true;
+            unchecked { ++i; }
+        }
+        for (uint256 i = 0; i < config.allowedSelectors.length; ) {
+            ss.ecdsaSelectorAllowed[config.key][config.allowedSelectors[i]] = true;
+            unchecked { ++i; }
+        }
+
         emit SessionCreatedECDSA(
             config.key,
             config.validAfter,
@@ -463,6 +481,17 @@ abstract contract SessionKeyManager {
 
         ss.p256AllowedTargets[keyHash] = config.allowedTargets;
         ss.p256AllowedSelectors[keyHash] = config.allowedSelectors;
+
+        // Populate O(1) lookup mappings and check for self-targeting
+        for (uint256 i = 0; i < config.allowedTargets.length; ) {
+            if (config.allowedTargets[i] == address(this)) revert CannotTargetSelf();
+            ss.p256TargetAllowed[keyHash][config.allowedTargets[i]] = true;
+            unchecked { ++i; }
+        }
+        for (uint256 i = 0; i < config.allowedSelectors.length; ) {
+            ss.p256SelectorAllowed[keyHash][config.allowedSelectors[i]] = true;
+            unchecked { ++i; }
+        }
 
         emit SessionCreatedP256(
             keyHash,
@@ -742,31 +771,14 @@ abstract contract SessionKeyManager {
     }
 
     function _checkTargetAllowedECDSA(address sessionKey, address target, SessionStorage storage ss) internal view {
-        address[] storage allowedTargets = ss.ecdsaAllowedTargets[sessionKey];
-        bool targetAllowed = false;
-        for (uint256 i = 0; i < allowedTargets.length; ) {
-            if (allowedTargets[i] == target) {
-                targetAllowed = true;
-                break;
-            }
-            unchecked { ++i; }
-        }
-        if (!targetAllowed) revert TargetNotAllowed();
+        if (!ss.ecdsaTargetAllowed[sessionKey][target]) revert TargetNotAllowed();
     }
 
     function _checkSelectorAllowedECDSA(address sessionKey, bytes4 targetSelector, SessionStorage storage ss) internal view {
         bytes4[] storage allowedSelectors = ss.ecdsaAllowedSelectors[sessionKey];
         if (allowedSelectors.length == 0 || targetSelector == bytes4(0)) return;
         
-        bool selectorAllowed = false;
-        for (uint256 i = 0; i < allowedSelectors.length; ) {
-            if (allowedSelectors[i] == targetSelector) {
-                selectorAllowed = true;
-                break;
-            }
-            unchecked { ++i; }
-        }
-        if (!selectorAllowed) revert SelectorNotAllowed();
+        if (!ss.ecdsaSelectorAllowed[sessionKey][targetSelector]) revert SelectorNotAllowed();
     }
 
     // ============ Internal - P256 Execute Handlers ============
@@ -828,31 +840,14 @@ abstract contract SessionKeyManager {
     }
 
     function _checkTargetAllowedP256(bytes32 keyHash, address target, SessionStorage storage ss) internal view {
-        address[] storage allowedTargets = ss.p256AllowedTargets[keyHash];
-        bool targetAllowed = false;
-        for (uint256 i = 0; i < allowedTargets.length; ) {
-            if (allowedTargets[i] == target) {
-                targetAllowed = true;
-                break;
-            }
-            unchecked { ++i; }
-        }
-        if (!targetAllowed) revert TargetNotAllowed();
+        if (!ss.p256TargetAllowed[keyHash][target]) revert TargetNotAllowed();
     }
 
     function _checkSelectorAllowedP256(bytes32 keyHash, bytes4 targetSelector, SessionStorage storage ss) internal view {
         bytes4[] storage allowedSelectors = ss.p256AllowedSelectors[keyHash];
         if (allowedSelectors.length == 0 || targetSelector == bytes4(0)) return;
         
-        bool selectorAllowed = false;
-        for (uint256 i = 0; i < allowedSelectors.length; ) {
-            if (allowedSelectors[i] == targetSelector) {
-                selectorAllowed = true;
-                break;
-            }
-            unchecked { ++i; }
-        }
-        if (!selectorAllowed) revert SelectorNotAllowed();
+        if (!ss.p256SelectorAllowed[keyHash][targetSelector]) revert SelectorNotAllowed();
     }
 
     // ============ Internal - Shared ============
