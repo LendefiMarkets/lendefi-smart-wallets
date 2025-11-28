@@ -4,8 +4,6 @@ pragma solidity ^0.8.23;
 import { BasePaymaster } from "./aa-v07/contracts/core/BasePaymaster.sol";
 import { IEntryPoint } from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
 import { PackedUserOperation } from "./aa-v07/contracts/interfaces/PackedUserOperation.sol";
-import { IPaymaster } from "./aa-v07/contracts/interfaces/IPaymaster.sol";
-import { IAccountFactory } from "./interfaces/IAccountFactory.sol";
 
 /**
  * @title LendefiPaymaster
