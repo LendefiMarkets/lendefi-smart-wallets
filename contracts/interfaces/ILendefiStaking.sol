@@ -4,16 +4,16 @@ pragma solidity 0.8.23;
 /**
  * @title ILendefiStaking
  * @notice Interface for Lendefi DeFi staking contract
- * @dev Users stake LDFI tokens to earn gas sponsorship tiers
+ * @dev Users stake LDF tokens to earn gas sponsorship tiers
  */
 interface ILendefiStaking {
     // ============ Enums ============
 
     enum Tier {
         NONE,      // 0 tokens - no subsidy
-        BASIC,     // >= 1,000 LDFI - 50% subsidy
-        PREMIUM,   // >= 10,000 LDFI - 90% subsidy
-        ULTIMATE   // >= 100,000 LDFI - 100% subsidy
+        BASIC,     // >= 1,000 LDF - 50% subsidy
+        PREMIUM,   // >= 10,000 LDF - 90% subsidy
+        ULTIMATE   // >= 100,000 LDF - 100% subsidy
     }
 
     // ============ Structs ============
