@@ -8,14 +8,14 @@ describe("USDL - Withdrawals and Redemptions", function () {
     // Helper to setup with deposit
     async function setupWithDeposit() {
         const fixture = await usdlFixture();
-        const { usdl, usdc, yieldVault, manager, user1 } = fixture;
+        const { usdl, router, usdc, yieldVault, manager, user1 } = fixture;
         const usdlAddress = await usdl.getAddress();
         const usdcAddress = await usdc.getAddress();
         const vaultAddress = await yieldVault.getAddress();
         
-        // Setup yield asset
-        await usdl.connect(manager).addYieldAsset(vaultAddress, usdcAddress, vaultAddress, ASSET_TYPE.ERC4626);
-        await usdl.connect(manager).updateWeights([10000]);
+        // Setup yield asset via router
+        await router.connect(manager).addYieldAsset(vaultAddress, usdcAddress, vaultAddress, ASSET_TYPE.ERC4626);
+        await router.connect(manager).updateWeights([10000]);
         
         // Deposit
         const depositAmount = ethers.parseUnits("1000", 6);
@@ -273,47 +273,48 @@ describe("USDL - Withdrawals and Redemptions", function () {
 
     describe("Proportional Redemption", function () {
         it("Should redeem from single yield asset", async function () {
-            const { usdl, yieldVault, user1, depositAmount } = await loadFixture(setupWithDeposit);
-            const usdlAddress = await usdl.getAddress();
+            const { usdl, router, yieldVault, user1, depositAmount } = await loadFixture(setupWithDeposit);
+            const routerAddress = await router.getAddress();
             
-            const vaultBalanceBefore = await yieldVault.balanceOf(usdlAddress);
+            const vaultBalanceBefore = await yieldVault.balanceOf(routerAddress);
             
             const shares = await usdl.balanceOf(user1.address);
             await usdl.connect(user1).redeem(shares / 2n, user1.address, user1.address);
             
-            const vaultBalanceAfter = await yieldVault.balanceOf(usdlAddress);
+            const vaultBalanceAfter = await yieldVault.balanceOf(routerAddress);
 
             expect(vaultBalanceAfter).to.be.lt(vaultBalanceBefore);
         });
 
         it("Should redeem from multiple yield assets proportionally", async function () {
-            const { usdl, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
+            const { usdl, router, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
             const usdcAddress = await usdc.getAddress();
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
-            // Setup two assets with 60/40 split
-            await usdl.connect(manager).addYieldAsset(
+            // Setup two assets with 60/40 split via router
+            await router.connect(manager).addYieldAsset(
                 await yieldVault.getAddress(), usdcAddress, await yieldVault.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault2.getAddress(), usdcAddress, await yieldVault2.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).updateWeights([6000, 4000]);
+            await router.connect(manager).updateWeights([6000, 4000]);
 
             // Deposit
             const depositAmount = ethers.parseUnits("10000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            const vault1Before = await yieldVault.balanceOf(usdlAddress);
-            const vault2Before = await yieldVault2.balanceOf(usdlAddress);
+            const vault1Before = await yieldVault.balanceOf(routerAddress);
+            const vault2Before = await yieldVault2.balanceOf(routerAddress);
 
             // Withdraw 50%
             const shares = await usdl.balanceOf(user1.address);
             await usdl.connect(user1).redeem(shares / 2n, user1.address, user1.address);
 
-            const vault1After = await yieldVault.balanceOf(usdlAddress);
-            const vault2After = await yieldVault2.balanceOf(usdlAddress);
+            const vault1After = await yieldVault.balanceOf(routerAddress);
+            const vault2After = await yieldVault2.balanceOf(routerAddress);
 
             // Both vaults should decrease
             expect(vault1After).to.be.lt(vault1Before);
