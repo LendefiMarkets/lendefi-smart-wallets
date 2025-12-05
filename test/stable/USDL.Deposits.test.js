@@ -8,15 +8,15 @@ describe("USDL - Deposits and Mints", function () {
     // Helper to setup yield asset
     async function setupWithYieldAsset() {
         const fixture = await usdlFixture();
-        const { usdl, manager, yieldVault, usdc } = fixture;
+        const { router, manager, yieldVault, usdc } = fixture;
         
-        await usdl.connect(manager).addYieldAsset(
+        await router.connect(manager).addYieldAsset(
             await yieldVault.getAddress(),
             await usdc.getAddress(),
             await yieldVault.getAddress(),
             ASSET_TYPE.ERC4626
         );
-        await usdl.connect(manager).updateWeights([10000]);
+        await router.connect(manager).updateWeights([10000]);
         
         return fixture;
     }
@@ -72,14 +72,16 @@ describe("USDL - Deposits and Mints", function () {
 
         it("Should allocate to yield asset proportionally", async function () {
             const fixture = await loadFixture(setupWithYieldAsset);
-            const { usdl, usdc, yieldVault, user1 } = fixture;
+            const { usdl, usdc, yieldVault, router, user1 } = fixture;
             const depositAmount = ethers.parseUnits("1000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            expect(await yieldVault.balanceOf(usdlAddress)).to.equal(depositAmount);
+            // Router holds the vault shares, not USDL
+            expect(await yieldVault.balanceOf(routerAddress)).to.equal(depositAmount);
         });
 
         it("Should revert if below minimum deposit", async function () {
@@ -278,35 +280,38 @@ describe("USDL - Deposits and Mints", function () {
     describe("Proportional Allocation", function () {
         it("Should allocate to single asset at 100%", async function () {
             const fixture = await loadFixture(setupWithYieldAsset);
-            const { usdl, usdc, yieldVault, user1 } = fixture;
+            const { usdl, router, usdc, yieldVault, user1 } = fixture;
             const depositAmount = ethers.parseUnits("1000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            expect(await yieldVault.balanceOf(usdlAddress)).to.equal(depositAmount);
+            // Yield tokens are held by router, not USDL
+            expect(await yieldVault.balanceOf(routerAddress)).to.equal(depositAmount);
         });
 
         it("Should allocate to two assets proportionally (60/40)", async function () {
-            const { usdl, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
+            const { usdl, router, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
             const usdcAddress = await usdc.getAddress();
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault.getAddress(), usdcAddress, await yieldVault.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault2.getAddress(), usdcAddress, await yieldVault2.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).updateWeights([6000, 4000]);
+            await router.connect(manager).updateWeights([6000, 4000]);
 
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            const vault1Balance = await yieldVault.balanceOf(usdlAddress);
-            const vault2Balance = await yieldVault2.balanceOf(usdlAddress);
+            const vault1Balance = await yieldVault.balanceOf(routerAddress);
+            const vault2Balance = await yieldVault2.balanceOf(routerAddress);
             
             // Should be approximately 60% and 40%
             expect(vault1Balance + vault2Balance).to.equal(depositAmount);
@@ -315,33 +320,35 @@ describe("USDL - Deposits and Mints", function () {
         });
 
         it("Should skip zero-weight assets", async function () {
-            const { usdl, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
+            const { usdl, router, usdc, yieldVault, yieldVault2, manager, user1 } = await loadFixture(usdlFixture);
             const usdcAddress = await usdc.getAddress();
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
             // Add two assets but only activate one
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault.getAddress(), usdcAddress, await yieldVault.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault2.getAddress(), usdcAddress, await yieldVault2.getAddress(), ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).updateWeights([10000, 0]); // 100% to vault1, 0% to vault2
+            await router.connect(manager).updateWeights([10000, 0]); // 100% to vault1, 0% to vault2
 
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            expect(await yieldVault.balanceOf(usdlAddress)).to.be.gt(0);
-            expect(await yieldVault2.balanceOf(usdlAddress)).to.equal(0);
+            expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
+            expect(await yieldVault2.balanceOf(routerAddress)).to.equal(0);
         });
 
-        it("Should keep USDC in contract when no active assets", async function () {
-            const { usdl, usdc, yieldVault, manager, user1 } = await loadFixture(usdlFixture);
+        it("Should keep USDC in router when no active assets", async function () {
+            const { usdl, router, usdc, yieldVault, manager, user1 } = await loadFixture(usdlFixture);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
             
             // Add asset but don't set weight
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 await yieldVault.getAddress(), await usdc.getAddress(), await yieldVault.getAddress(), ASSET_TYPE.ERC4626
             );
             // Weight remains 0 by default
@@ -350,9 +357,9 @@ describe("USDL - Deposits and Mints", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            // USDC should remain in contract
-            expect(await usdc.balanceOf(usdlAddress)).to.equal(depositAmount);
-            expect(await yieldVault.balanceOf(usdlAddress)).to.equal(0);
+            // USDC should be in router when no active assets
+            expect(await usdc.balanceOf(routerAddress)).to.equal(depositAmount);
+            expect(await yieldVault.balanceOf(routerAddress)).to.equal(0);
         });
     });
 
