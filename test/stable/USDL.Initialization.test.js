@@ -7,7 +7,7 @@ describe("USDL - Initialization", function () {
     describe("Constructor and Initialize", function () {
         it("Should initialize with correct name and symbol", async function () {
             const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.name()).to.equal("Lendefi USD V3");
+            expect(await usdl.name()).to.equal("Lendefi USD");
             expect(await usdl.symbol()).to.equal("USDL");
         });
 
@@ -16,9 +16,9 @@ describe("USDL - Initialization", function () {
             expect(await usdl.decimals()).to.equal(6);
         });
 
-        it("Should initialize with version 3", async function () {
+        it("Should initialize with version 4", async function () {
             const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.version()).to.equal(3);
+            expect(await usdl.version()).to.equal(4);
         });
 
         it("Should set correct asset address", async function () {
@@ -47,8 +47,8 @@ describe("USDL - Initialization", function () {
         });
 
         it("Should set default yield accrual interval to 1 day", async function () {
-            const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.yieldAccrualInterval()).to.equal(86400);
+            const { router } = await loadFixture(usdlFixture);
+            expect(await router.yieldAccrualInterval()).to.equal(86400);
         });
     });
 
@@ -69,9 +69,10 @@ describe("USDL - Initialization", function () {
             expect(await usdl.hasRole(roles.UPGRADER_ROLE, owner.address)).to.be.true;
         });
 
-        it("Should grant MANAGER_ROLE to owner", async function () {
-            const { usdl, owner, roles } = await loadFixture(usdlFixture);
-            expect(await usdl.hasRole(roles.MANAGER_ROLE, owner.address)).to.be.true;
+        it("Should grant MANAGER_ROLE to owner on router", async function () {
+            const { router, owner } = await loadFixture(usdlFixture);
+            const MANAGER_ROLE = await router.MANAGER_ROLE();
+            expect(await router.hasRole(MANAGER_ROLE, owner.address)).to.be.true;
         });
 
         it("Should grant BLACKLISTER_ROLE to owner", async function () {
@@ -162,18 +163,20 @@ describe("USDL - Initialization", function () {
             expect(await usdl.MAX_FEE_BPS()).to.equal(500); // 5%
         });
 
-        it("Should have correct MAX_YIELD_ASSETS constant", async function () {
-            const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.MAX_YIELD_ASSETS()).to.equal(10);
+        it("Should have correct MAX_YIELD_ASSETS constant on router", async function () {
+            const { router } = await loadFixture(usdlFixture);
+            expect(await router.MAX_YIELD_ASSETS()).to.equal(10);
         });
 
         it("Should have correct role constants", async function () {
-            const { usdl } = await loadFixture(usdlFixture);
+            const { usdl, router } = await loadFixture(usdlFixture);
             expect(await usdl.PAUSER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("PAUSER_ROLE")));
-            expect(await usdl.MANAGER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("MANAGER_ROLE")));
             expect(await usdl.BRIDGE_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("BRIDGE_ROLE")));
             expect(await usdl.UPGRADER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("UPGRADER_ROLE")));
             expect(await usdl.BLACKLISTER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("BLACKLISTER_ROLE")));
+            expect(await usdl.ROUTER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("ROUTER_ROLE")));
+            // MANAGER_ROLE is now on router
+            expect(await router.MANAGER_ROLE()).to.equal(ethers.keccak256(ethers.toUtf8Bytes("MANAGER_ROLE")));
         });
     });
 });
