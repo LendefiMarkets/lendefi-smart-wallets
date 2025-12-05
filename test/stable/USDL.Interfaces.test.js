@@ -96,7 +96,7 @@ describe("USDL - Interface Support", function () {
     describe("ERC20 Metadata", function () {
         it("Should return correct name", async function () {
             const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.name()).to.equal("Lendefi USD V3");
+            expect(await usdl.name()).to.equal("Lendefi USD");
         });
 
         it("Should return correct symbol", async function () {
