@@ -51,6 +51,23 @@ async function deployMockSUsds(usdsAddress) {
 }
 
 /**
+ * Deploy YieldRouter with proxy
+ */
+async function deployYieldRouter(admin, usdcAddress, vaultAddress) {
+    const YieldRouter = await ethers.getContractFactory("YieldRouter");
+    const router = await upgrades.deployProxy(
+        YieldRouter,
+        [admin, usdcAddress, vaultAddress],
+        {
+            initializer: 'initialize',
+            unsafeAllow: ['constructor']
+        }
+    );
+    await router.waitForDeployment();
+    return router;
+}
+
+/**
  * Deploy USDL vault with proxy
  */
 async function deployUSDL(owner, usdcAddress, treasuryAddress) {
@@ -65,6 +82,25 @@ async function deployUSDL(owner, usdcAddress, treasuryAddress) {
     );
     await usdl.waitForDeployment();
     return usdl;
+}
+
+/**
+ * Deploy USDL and YieldRouter together with proper role setup
+ */
+async function deployUSDLWithRouter(owner, usdcAddress, treasuryAddress) {
+    // Deploy USDL first
+    const usdl = await deployUSDL(owner, usdcAddress, treasuryAddress);
+    
+    // Deploy YieldRouter with USDL as vault
+    const router = await deployYieldRouter(owner, usdcAddress, await usdl.getAddress());
+    
+    // Set up mutual trust: USDL <-> YieldRouter
+    // 1. Set the router on USDL (grants ROUTER_ROLE to router)
+    await usdl.setYieldRouter(await router.getAddress());
+    
+    // 2. Router already has VAULT_ROLE for USDL from initialization
+    
+    return { usdl, router };
 }
 
 /**
@@ -95,7 +131,7 @@ async function deployMockPriceFeed() {
 }
 
 /**
- * Standard fixture for USDL tests
+ * Standard fixture for USDL tests (with YieldRouter)
  */
 async function usdlFixture() {
     const [owner, treasury, user1, user2, bridge, manager, pauser, upgrader, blacklister] = await ethers.getSigners();
@@ -105,20 +141,30 @@ async function usdlFixture() {
     const yieldVault2 = await deployMockYieldVault(await usdc.getAddress());
     const yieldVault3 = await deployMockYieldVault(await usdc.getAddress());
     
-    const usdl = await deployUSDL(owner.address, await usdc.getAddress(), treasury.address);
+    // Deploy USDL with YieldRouter
+    const { usdl, router } = await deployUSDLWithRouter(
+        owner.address, 
+        await usdc.getAddress(), 
+        treasury.address
+    );
 
-    // Grant roles
+    // Grant USDL roles
     const BRIDGE_ROLE = await usdl.BRIDGE_ROLE();
-    const MANAGER_ROLE = await usdl.MANAGER_ROLE();
     const PAUSER_ROLE = await usdl.PAUSER_ROLE();
     const UPGRADER_ROLE = await usdl.UPGRADER_ROLE();
     const BLACKLISTER_ROLE = await usdl.BLACKLISTER_ROLE();
+    const ROUTER_ROLE = await usdl.ROUTER_ROLE();
 
     await usdl.grantBridgeRole(bridge.address);
-    await usdl.grantRole(MANAGER_ROLE, manager.address);
     await usdl.grantRole(PAUSER_ROLE, pauser.address);
     await usdl.grantRole(UPGRADER_ROLE, upgrader.address);
     await usdl.grantRole(BLACKLISTER_ROLE, blacklister.address);
+
+    // Grant YieldRouter roles
+    const MANAGER_ROLE = await router.MANAGER_ROLE();
+    const VAULT_ROLE = await router.VAULT_ROLE();
+    
+    await router.grantRole(MANAGER_ROLE, manager.address);
 
     // Mint USDC to users
     const INITIAL_USDC = ethers.parseUnits("100000", 6);
@@ -127,6 +173,7 @@ async function usdlFixture() {
 
     return {
         usdl,
+        router,
         usdc,
         yieldVault,
         yieldVault2,
@@ -141,12 +188,12 @@ async function usdlFixture() {
         upgrader,
         blacklister,
         INITIAL_USDC,
-        roles: { BRIDGE_ROLE, MANAGER_ROLE, PAUSER_ROLE, UPGRADER_ROLE, BLACKLISTER_ROLE }
+        roles: { BRIDGE_ROLE, MANAGER_ROLE, PAUSER_ROLE, UPGRADER_ROLE, BLACKLISTER_ROLE, ROUTER_ROLE, VAULT_ROLE }
     };
 }
 
 /**
- * Fixture for USDL with Sky protocol mocks
+ * Fixture for USDL with Sky protocol mocks (with YieldRouter)
  */
 async function usdlSkyFixture() {
     const [owner, treasury, user1, user2, bridge, manager, pauser, upgrader, blacklister] = await ethers.getSigners();
@@ -160,23 +207,33 @@ async function usdlSkyFixture() {
     const litePSM = await deployMockLitePSM(await usdc.getAddress(), await usds.getAddress());
     const sUsds = await deployMockSUsds(await usds.getAddress());
     
-    const usdl = await deployUSDL(owner.address, await usdc.getAddress(), treasury.address);
+    // Deploy USDL with YieldRouter
+    const { usdl, router } = await deployUSDLWithRouter(
+        owner.address, 
+        await usdc.getAddress(), 
+        treasury.address
+    );
 
-    // Grant roles
+    // Grant USDL roles
     const BRIDGE_ROLE = await usdl.BRIDGE_ROLE();
-    const MANAGER_ROLE = await usdl.MANAGER_ROLE();
     const PAUSER_ROLE = await usdl.PAUSER_ROLE();
     const UPGRADER_ROLE = await usdl.UPGRADER_ROLE();
     const BLACKLISTER_ROLE = await usdl.BLACKLISTER_ROLE();
+    const ROUTER_ROLE = await usdl.ROUTER_ROLE();
 
     await usdl.grantBridgeRole(bridge.address);
-    await usdl.grantRole(MANAGER_ROLE, manager.address);
     await usdl.grantRole(PAUSER_ROLE, pauser.address);
     await usdl.grantRole(UPGRADER_ROLE, upgrader.address);
     await usdl.grantRole(BLACKLISTER_ROLE, blacklister.address);
 
-    // Configure Sky protocol
-    await usdl.setSkyConfig(
+    // Grant YieldRouter roles
+    const MANAGER_ROLE = await router.MANAGER_ROLE();
+    const VAULT_ROLE = await router.VAULT_ROLE();
+    
+    await router.grantRole(MANAGER_ROLE, manager.address);
+
+    // Configure Sky protocol on YieldRouter (not USDL)
+    await router.setSkyConfig(
         await litePSM.getAddress(),
         await usds.getAddress(),
         await sUsds.getAddress()
@@ -189,6 +246,7 @@ async function usdlSkyFixture() {
 
     return {
         usdl,
+        router,
         usdc,
         usds,
         litePSM,
@@ -204,7 +262,7 @@ async function usdlSkyFixture() {
         upgrader,
         blacklister,
         INITIAL_USDC,
-        roles: { BRIDGE_ROLE, MANAGER_ROLE, PAUSER_ROLE, UPGRADER_ROLE, BLACKLISTER_ROLE }
+        roles: { BRIDGE_ROLE, MANAGER_ROLE, PAUSER_ROLE, UPGRADER_ROLE, BLACKLISTER_ROLE, ROUTER_ROLE, VAULT_ROLE }
     };
 }
 
@@ -255,6 +313,8 @@ module.exports = {
     deployMockLitePSM,
     deployMockSUsds,
     deployUSDL,
+    deployYieldRouter,
+    deployUSDLWithRouter,
     deployUSDLRebasingCCIP,
     deployMockPriceFeed,
     usdlFixture,
