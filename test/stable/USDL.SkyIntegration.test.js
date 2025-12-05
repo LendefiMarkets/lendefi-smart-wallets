@@ -7,67 +7,67 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
     describe("Sky Configuration", function () {
         it("Should have correct Sky config set", async function () {
-            const { usdl, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
             
-            const skyConfig = await usdl.skyConfig();
+            const skyConfig = await router.skyConfig();
             expect(skyConfig.litePSM).to.equal(await litePSM.getAddress());
             expect(skyConfig.usds).to.equal(await usds.getAddress());
             expect(skyConfig.sUsds).to.equal(await sUsds.getAddress());
         });
 
         it("Should emit SkyConfigUpdated event on setSkyConfig", async function () {
-            const { usdl, owner, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, owner, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
             
             const litePSMAddress = await litePSM.getAddress();
             const usdsAddress = await usds.getAddress();
             const sUsdsAddress = await sUsds.getAddress();
 
-            await expect(usdl.connect(owner).setSkyConfig(litePSMAddress, usdsAddress, sUsdsAddress))
-                .to.emit(usdl, "SkyConfigUpdated")
+            await expect(router.connect(owner).setSkyConfig(litePSMAddress, usdsAddress, sUsdsAddress))
+                .to.emit(router, "SkyConfigUpdated")
                 .withArgs(litePSMAddress, usdsAddress, sUsdsAddress);
         });
 
         it("Should revert setSkyConfig with zero litePSM address", async function () {
-            const { usdl, owner, usds, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, owner, usds, sUsds } = await loadFixture(usdlSkyFixture);
             
             await expect(
-                usdl.connect(owner).setSkyConfig(
+                router.connect(owner).setSkyConfig(
                     ethers.ZeroAddress, 
                     await usds.getAddress(), 
                     await sUsds.getAddress()
                 )
-            ).to.be.revertedWithCustomError(usdl, "ZeroAddress");
+            ).to.be.revertedWithCustomError(router, "ZeroAddress");
         });
 
         it("Should revert setSkyConfig with zero usds address", async function () {
-            const { usdl, owner, litePSM, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, owner, litePSM, sUsds } = await loadFixture(usdlSkyFixture);
             
             await expect(
-                usdl.connect(owner).setSkyConfig(
+                router.connect(owner).setSkyConfig(
                     await litePSM.getAddress(), 
                     ethers.ZeroAddress, 
                     await sUsds.getAddress()
                 )
-            ).to.be.revertedWithCustomError(usdl, "ZeroAddress");
+            ).to.be.revertedWithCustomError(router, "ZeroAddress");
         });
 
         it("Should revert setSkyConfig with zero sUsds address", async function () {
-            const { usdl, owner, litePSM, usds } = await loadFixture(usdlSkyFixture);
+            const { router, owner, litePSM, usds } = await loadFixture(usdlSkyFixture);
             
             await expect(
-                usdl.connect(owner).setSkyConfig(
+                router.connect(owner).setSkyConfig(
                     await litePSM.getAddress(), 
                     await usds.getAddress(), 
                     ethers.ZeroAddress
                 )
-            ).to.be.revertedWithCustomError(usdl, "ZeroAddress");
+            ).to.be.revertedWithCustomError(router, "ZeroAddress");
         });
 
         it("Should restrict setSkyConfig to admin role", async function () {
-            const { usdl, user1, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, user1, litePSM, usds, sUsds } = await loadFixture(usdlSkyFixture);
             
             await expect(
-                usdl.connect(user1).setSkyConfig(
+                router.connect(user1).setSkyConfig(
                     await litePSM.getAddress(), 
                     await usds.getAddress(), 
                     await sUsds.getAddress()
@@ -78,60 +78,61 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
     describe("Add sUSDS Yield Asset", function () {
         it("Should add sUSDS as yield asset", async function () {
-            const { usdl, manager, usdc, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, manager, usdc, sUsds } = await loadFixture(usdlSkyFixture);
             const sUsdsAddress = await sUsds.getAddress();
             const usdcAddress = await usdc.getAddress();
 
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 usdcAddress,
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
 
-            expect(await usdl.getYieldAssetCount()).to.equal(1);
+            expect(await router.getYieldAssetCount()).to.equal(1);
             
-            const config = await usdl.getYieldAssetConfig(sUsdsAddress);
+            const config = await router.getYieldAssetConfig(sUsdsAddress);
             expect(config.manager).to.equal(sUsdsAddress);
             expect(config.depositToken).to.equal(usdcAddress);
             expect(config.assetType).to.equal(ASSET_TYPE.SKY_SUSDS);
         });
 
         it("Should activate sUSDS with weight", async function () {
-            const { usdl, manager, usdc, sUsds } = await loadFixture(usdlSkyFixture);
+            const { router, manager, usdc, sUsds } = await loadFixture(usdlSkyFixture);
             const sUsdsAddress = await sUsds.getAddress();
 
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 await usdc.getAddress(),
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
 
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
 
-            expect(await usdl.getYieldAssetWeight(sUsdsAddress)).to.equal(10000);
+            expect(await router.getYieldAssetWeight(sUsdsAddress)).to.equal(10000);
         });
     });
 
     describe("Deposit to sUSDS", function () {
-        async function setupSkyYieldAsset(usdl, manager, usdc, sUsds) {
+        async function setupSkyYieldAsset(router, manager, usdc, sUsds) {
             const sUsdsAddress = await sUsds.getAddress();
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 await usdc.getAddress(),
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
         }
 
         it("Should deposit USDC and receive sUSDS shares via Sky flow", async function () {
-            const { usdl, usdc, usds, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
-            await setupSkyYieldAsset(usdl, manager, usdc, sUsds);
+            const { usdl, router, usdc, usds, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
+            await setupSkyYieldAsset(router, manager, usdc, sUsds);
 
             const depositAmount = ethers.parseUnits("1000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
@@ -139,20 +140,20 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
             // User should have USDL shares
             expect(await usdl.balanceOf(user1.address)).to.be.gt(0);
 
-            // USDL should have sUSDS tokens
-            const sUsdsBalance = await sUsds.balanceOf(usdlAddress);
+            // Router should have sUSDS tokens
+            const sUsdsBalance = await sUsds.balanceOf(routerAddress);
             expect(sUsdsBalance).to.be.gt(0);
 
             // USDC should be converted (vault should have 0 USDC)
             expect(await usdc.balanceOf(usdlAddress)).to.equal(0);
 
-            // USDS should also be converted to sUSDS (vault should have 0 USDS)
-            expect(await usds.balanceOf(usdlAddress)).to.equal(0);
+            // USDS should also be converted to sUSDS (router should have 0 USDS)
+            expect(await usds.balanceOf(routerAddress)).to.equal(0);
         });
 
         it("Should correctly track total assets via sUSDS", async function () {
-            const { usdl, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
-            await setupSkyYieldAsset(usdl, manager, usdc, sUsds);
+            const { usdl, router, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
+            await setupSkyYieldAsset(router, manager, usdc, sUsds);
 
             const depositAmount = ethers.parseUnits("1000", 6);
             const usdlAddress = await usdl.getAddress();
@@ -165,8 +166,8 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
         });
 
         it("Should handle multiple deposits", async function () {
-            const { usdl, usdc, sUsds, manager, user1, user2 } = await loadFixture(usdlSkyFixture);
-            await setupSkyYieldAsset(usdl, manager, usdc, sUsds);
+            const { usdl, router, usdc, sUsds, manager, user1, user2 } = await loadFixture(usdlSkyFixture);
+            await setupSkyYieldAsset(router, manager, usdc, sUsds);
 
             const depositAmount1 = ethers.parseUnits("1000", 6);
             const depositAmount2 = ethers.parseUnits("500", 6);
@@ -188,16 +189,16 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
     describe("Withdraw from sUSDS", function () {
         async function setupWithDeposit(fixture, depositAmount = ethers.parseUnits("1000", 6)) {
-            const { usdl, usdc, sUsds, manager, user1 } = fixture;
+            const { usdl, router, usdc, sUsds, manager, user1 } = fixture;
             const sUsdsAddress = await sUsds.getAddress();
             
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 await usdc.getAddress(),
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
 
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
@@ -271,50 +272,52 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
     describe("Mixed Yield Assets (sUSDS + ERC4626)", function () {
         it("Should handle deposits split between sUSDS and ERC4626", async function () {
-            const { usdl, usdc, sUsds, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
+            const { usdl, router, usdc, sUsds, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
             
             const sUsdsAddress = await sUsds.getAddress();
             const vaultAddress = await yieldVault.getAddress();
             const usdcAddress = await usdc.getAddress();
 
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress, usdcAddress, sUsdsAddress, ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 vaultAddress, usdcAddress, vaultAddress, ASSET_TYPE.ERC4626
             );
 
-            await usdl.connect(manager).updateWeights([5000, 5000]);
+            await router.connect(manager).updateWeights([5000, 5000]);
 
             const depositAmount = ethers.parseUnits("2000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            expect(await sUsds.balanceOf(usdlAddress)).to.be.gt(0);
-            expect(await yieldVault.balanceOf(usdlAddress)).to.be.gt(0);
+            expect(await sUsds.balanceOf(routerAddress)).to.be.gt(0);
+            expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
 
             expect(await usdl.totalAssets()).to.equal(depositAmount);
         });
 
         it("Should withdraw proportionally from both assets", async function () {
-            const { usdl, usdc, sUsds, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
+            const { usdl, router, usdc, sUsds, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
             
             const sUsdsAddress = await sUsds.getAddress();
             const vaultAddress = await yieldVault.getAddress();
             const usdcAddress = await usdc.getAddress();
 
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress, usdcAddress, sUsdsAddress, ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 vaultAddress, usdcAddress, vaultAddress, ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).updateWeights([5000, 5000]);
+            await router.connect(manager).updateWeights([5000, 5000]);
 
             const depositAmount = ethers.parseUnits("2000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
@@ -322,45 +325,46 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
             const shares = await usdl.balanceOf(user1.address);
             await usdl.connect(user1).redeem(shares / 2n, user1.address, user1.address);
 
-            expect(await sUsds.balanceOf(usdlAddress)).to.be.gt(0);
-            expect(await yieldVault.balanceOf(usdlAddress)).to.be.gt(0);
+            expect(await sUsds.balanceOf(routerAddress)).to.be.gt(0);
+            expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
         });
     });
 
     describe("Edge Cases", function () {
         it("Should handle deposit when Sky config is set but no sUSDS yield asset", async function () {
-            const { usdl, usdc, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
+            const { usdl, router, usdc, yieldVault, manager, user1 } = await loadFixture(usdlSkyFixture);
             
             const vaultAddress = await yieldVault.getAddress();
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 vaultAddress,
                 await usdc.getAddress(),
                 vaultAddress,
                 ASSET_TYPE.ERC4626
             );
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
 
             const depositAmount = ethers.parseUnits("1000", 6);
             const usdlAddress = await usdl.getAddress();
+            const routerAddress = await router.getAddress();
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            expect(await yieldVault.balanceOf(usdlAddress)).to.be.gt(0);
+            expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
             expect(await usdl.totalAssets()).to.equal(depositAmount);
         });
 
         it("Should handle very small deposits to sUSDS", async function () {
-            const { usdl, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
+            const { usdl, router, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
             
             const sUsdsAddress = await sUsds.getAddress();
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 await usdc.getAddress(),
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
 
             const depositAmount = ethers.parseUnits("1", 6);
             const usdlAddress = await usdl.getAddress();
@@ -372,16 +376,16 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
         });
 
         it("Should handle large deposits to sUSDS", async function () {
-            const { usdl, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
+            const { usdl, router, usdc, sUsds, manager, user1 } = await loadFixture(usdlSkyFixture);
             
             const sUsdsAddress = await sUsds.getAddress();
-            await usdl.connect(manager).addYieldAsset(
+            await router.connect(manager).addYieldAsset(
                 sUsdsAddress,
                 await usdc.getAddress(),
                 sUsdsAddress,
                 ASSET_TYPE.SKY_SUSDS
             );
-            await usdl.connect(manager).updateWeights([10000]);
+            await router.connect(manager).updateWeights([10000]);
 
             const depositAmount = ethers.parseUnits("50000", 6);
             await usdc.mint(user1.address, depositAmount);
