@@ -134,12 +134,12 @@ contract YieldRouter is
 
     /**
      * @notice Initialize the YieldRouter contract
-     * @param _admin Admin address (gets DEFAULT_ADMIN_ROLE)
+     * @param _multisig Admin address (gets DEFAULT_ADMIN_ROLE) - Multisig
      * @param _usdc USDC token address
      * @param _vault USDL vault address
      */
-    function initialize(address _admin, address _usdc, address _vault) external initializer {
-        if (_admin == address(0)) revert ZeroAddress();
+    function initialize(address _multisig, address _usdc, address _vault) external initializer {
+        if (_multisig == address(0)) revert ZeroAddress();
         if (_usdc == address(0)) revert ZeroAddress();
         if (_vault == address(0)) revert ZeroAddress();
 
@@ -147,9 +147,9 @@ contract YieldRouter is
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _admin);
-        _grantRole(MANAGER_ROLE, _admin);
-        _grantRole(UPGRADER_ROLE, _admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, _multisig);
+        _grantRole(MANAGER_ROLE, _multisig);
+        _grantRole(UPGRADER_ROLE, _multisig);
         _grantRole(VAULT_ROLE, _vault);
 
         usdc = _usdc;
@@ -601,32 +601,28 @@ contract YieldRouter is
      * @param amount Amount of USDC to allocate
      */
     function _allocateToYieldAssets(uint256 amount) internal {
-        address[] memory tokens = _yieldAssetWeights.keys();
-        uint256 length = tokens.length;
-        uint256 allocated = 0;
+        uint256 length = _yieldAssetWeights.length();
+        if (length == 0) return;
+
+        address[] memory tokens = new address[](length);
+        uint256[] memory weights = new uint256[](length);
         uint256 lastActiveIndex = type(uint256).max;
 
-        // Cache weights in memory
-        uint256[] memory weights = new uint256[](length);
+        // Combine loading and finding last active index into one loop
         for (uint256 i = 0; i < length; ++i) {
-            weights[i] = _yieldAssetWeights.get(tokens[i]);
-        }
-
-        // Find last active asset for dust handling
-        for (uint256 i = length; i > 0; --i) {
-            if (weights[i - 1] > 0) {
-                lastActiveIndex = i - 1;
-                break;
+            (tokens[i], weights[i]) = _yieldAssetWeights.at(i);
+            if (weights[i] > 0) {
+                lastActiveIndex = i;
             }
         }
 
         // If no active assets, USDC stays idle in this contract (tracked balance unchanged)
         if (lastActiveIndex == type(uint256).max) return;
 
-        for (uint256 i = 0; i < length; ++i) {
-            address token = tokens[i];
-            uint256 weight = weights[i];
+        uint256 allocated = 0;
 
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 weight = weights[i];
             if (weight == 0) continue;
 
             uint256 allocation;
@@ -638,11 +634,14 @@ contract YieldRouter is
             }
 
             if (allocation > 0) {
-                // Decrement tracked USDC before depositing to protocol
-                trackedUSDCBalance -= allocation;
-                _depositToProtocol(yieldAssetConfigs[token], allocation);
+                _depositToProtocol(yieldAssetConfigs[tokens[i]], allocation);
                 allocated += allocation;
             }
+        }
+
+        // Update storage once at the end
+        if (allocated > 0) {
+            trackedUSDCBalance -= allocated;
         }
     }
 
@@ -831,14 +830,17 @@ contract YieldRouter is
         // Cache vault storage read
         IUSDL usdl = IUSDL(vault);
         uint256 currentDeposited = usdl.totalDepositedAssets();
+
+        lastYieldAccrualTimestamp = block.timestamp;
+
+        if (currentDeposited == 0) return 0;
+
         uint256 currentIndex = usdl.rebaseIndex();
 
         // Calculate actual value using internal accounting (excludes donations)
         uint256 actualValue = _calculateTrackedValue();
 
-        lastYieldAccrualTimestamp = block.timestamp;
-
-        if (actualValue > currentDeposited && currentDeposited > 0) {
+        if (actualValue > currentDeposited) {
             yieldAccrued = actualValue - currentDeposited;
 
             // Harvest yield (pull USDC back from protocols)
