@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, deployYieldRouter } = require("./helpers/setup");
 
 const ASSET_TYPE = {
@@ -378,6 +378,7 @@ describe("USDL - Branch Coverage", function () {
             
             await usdc.connect(user1).approve(await usdl.getAddress(), ethers.parseUnits("100", 6));
             await usdl.connect(user1).deposit(ethers.parseUnits("100", 6), user1.address);
+            await mine(5);
             
             return fixture;
         }
@@ -620,6 +621,7 @@ describe("USDL - Branch Coverage", function () {
             // First user deposits
             await usdc.connect(user1).approve(await usdl.getAddress(), ethers.parseUnits("1000", 6));
             await usdl.connect(user1).deposit(ethers.parseUnits("1000", 6), user1.address);
+            await mine(5);
             
             // Simulate yield by increasing vault share value
             await yieldVault.setYieldMultiplier(ethers.parseUnits("1.5", 6)); // 50% yield
