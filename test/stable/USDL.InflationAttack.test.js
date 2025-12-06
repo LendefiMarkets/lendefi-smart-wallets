@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Inflation Attack Resistance", function () {
@@ -22,6 +22,10 @@ describe("USDL - Inflation Attack Resistance", function () {
         const depositAmount = ethers.parseUnits("1000", 6);
         await usdc.connect(user1).approve(usdlAddress, depositAmount);
         await usdl.connect(user1).deposit(depositAmount, user1.address);
+        
+        // Advance time and call performUpkeep to allocate pending deposits to protocols
+        await time.increase(86401);
+        await router.performUpkeep("0x");
         
         return { ...fixture, depositAmount, routerAddress };
     }
