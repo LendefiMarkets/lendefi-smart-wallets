@@ -209,7 +209,7 @@ contract USDL is
         _grantRole(UPGRADER_ROLE, _multisig);
         _grantRole(BLACKLISTER_ROLE, _multisig);
 
-        version = 4;
+        version = 1;
         ccipAdmin = _multisig;
         treasury = _treasury;
         assetAddress = _usdc;

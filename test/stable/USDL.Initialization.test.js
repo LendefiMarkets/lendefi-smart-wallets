@@ -18,7 +18,7 @@ describe("USDL - Initialization", function () {
 
         it("Should initialize with version 4", async function () {
             const { usdl } = await loadFixture(usdlFixture);
-            expect(await usdl.version()).to.equal(4);
+            expect(await usdl.version()).to.equal(1);
         });
 
         it("Should set correct asset address", async function () {
