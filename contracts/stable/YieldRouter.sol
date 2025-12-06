@@ -522,11 +522,11 @@ contract YieldRouter is
             }
         }
 
-        // Transfer all tracked USDC to vault
-        uint256 tracked = trackedUSDCBalance;
-        if (tracked > 0) {
+        // Transfer ALL USDC to vault (not just tracked, since redeems added to balance)
+        uint256 usdcBalance = IERC20(_usdc).balanceOf(address(this));
+        if (usdcBalance > 0) {
             trackedUSDCBalance = 0;
-            IERC20(_usdc).safeTransfer(_vault, tracked);
+            IERC20(_usdc).safeTransfer(_vault, usdcBalance);
         }
     }
 
