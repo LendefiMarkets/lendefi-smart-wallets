@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlSkyFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Sky Protocol Integration (sUSDS)", function () {
@@ -203,6 +203,8 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
+            await mine(5);
+
             return depositAmount;
         }
 
@@ -321,6 +323,8 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            await mine(5);
 
             const shares = await usdl.balanceOf(user1.address);
             await usdl.connect(user1).redeem(shares / 2n, user1.address, user1.address);
