@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlSkyFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Sky Protocol Integration (sUSDS)", function () {
@@ -137,6 +137,10 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             // User should have USDL shares
             expect(await usdl.balanceOf(user1.address)).to.be.gt(0);
 
@@ -202,6 +206,10 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             await mine(5);
 
@@ -296,6 +304,10 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             expect(await sUsds.balanceOf(routerAddress)).to.be.gt(0);
             expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
 
@@ -323,6 +335,10 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             await mine(5);
 
@@ -353,6 +369,10 @@ describe("USDL - Sky Protocol Integration (sUSDS)", function () {
 
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
             expect(await usdl.totalAssets()).to.equal(depositAmount);
