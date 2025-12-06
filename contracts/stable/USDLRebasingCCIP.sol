@@ -10,6 +10,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IBurnMintERC20} from "../interfaces/IBurnMintERC20.sol";
 import {IGetCCIPAdmin} from "../interfaces/IGetCCIPAdmin.sol";
 import {IAggregatorV3Interface} from "../interfaces/IAggregatorV3Interface.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title USDLRebasingCCIP
 /// @author Lendefi Markets
@@ -22,6 +23,8 @@ contract USDLRebasingCCIP is
     UUPSUpgradeable,
     IGetCCIPAdmin
 {
+    using Math for uint256;
+
     /// @notice AccessControl role for CCIP bridge operations
     bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");
     /// @notice AccessControl role for authorizing upgrades
@@ -147,7 +150,7 @@ contract USDLRebasingCCIP is
      */
     function burnFrom(address account, uint256 amount) external onlyRole(BRIDGE_ROLE) {
         // Allowance check uses rebased amount
-        uint256 rebasedAmount = _toRebasedAmount(amount);
+        uint256 rebasedAmount = _toRebasedAmount(amount, Math.Rounding.Ceil);
         _useAllowance(account, msg.sender, rebasedAmount);
 
         _burnShares(account, amount);
@@ -196,7 +199,7 @@ contract USDLRebasingCCIP is
     /// @param amount Amount to transfer (in rebased units)
     /// @return True if transfer was successful
     function transfer(address to, uint256 amount) public override returns (bool) {
-        _transferShares(msg.sender, to, _toRawShares(amount));
+        _transferShares(msg.sender, to, _toRawShares(amount, Math.Rounding.Floor));
         return true;
     }
 
@@ -207,7 +210,7 @@ contract USDLRebasingCCIP is
     /// @return True if transfer was successful
     function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
         _useAllowance(from, msg.sender, amount);
-        _transferShares(from, to, _toRawShares(amount));
+        _transferShares(from, to, _toRawShares(amount, Math.Rounding.Floor));
         return true;
     }
 
@@ -224,7 +227,7 @@ contract USDLRebasingCCIP is
     /// @param account Address to query
     /// @return Balance in rebased units
     function balanceOf(address account) public view override returns (uint256) {
-        return (_shares[account] * rebaseIndex) / REBASE_INDEX_PRECISION;
+        return _toRebasedAmount(_shares[account], Math.Rounding.Floor);
     }
 
     // ============ ERC20 Overrides ============
@@ -232,7 +235,7 @@ contract USDLRebasingCCIP is
     /// @notice Get total supply of USDL (rebased)
     /// @return Total supply in rebased units
     function totalSupply() public view override returns (uint256) {
-        return (_totalShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        return _toRebasedAmount(_totalShares, Math.Rounding.Floor);
     }
 
     /// @notice Get allowance for spender
@@ -266,7 +269,7 @@ contract USDLRebasingCCIP is
         if (account == address(0)) revert ZeroAddress();
         _shares[account] += rawShares;
         _totalShares += rawShares;
-        emit Transfer(address(0), account, _toRebasedAmount(rawShares));
+        emit Transfer(address(0), account, _toRebasedAmount(rawShares, Math.Rounding.Floor));
     }
 
     /// @notice Burn raw shares for CCIP bridge
@@ -281,7 +284,7 @@ contract USDLRebasingCCIP is
             _shares[account] = currentShares - rawShares;
         }
         _totalShares -= rawShares;
-        emit Transfer(account, address(0), _toRebasedAmount(rawShares));
+        emit Transfer(account, address(0), _toRebasedAmount(rawShares, Math.Rounding.Floor));
     }
 
     /// @notice Transfer raw shares from one account to another
@@ -300,7 +303,7 @@ contract USDLRebasingCCIP is
         }
         _shares[to] += rawShares;
 
-        emit Transfer(from, to, _toRebasedAmount(rawShares));
+        emit Transfer(from, to, _toRebasedAmount(rawShares, Math.Rounding.Floor));
     }
 
     /// @notice Set allowance for spender
@@ -338,16 +341,19 @@ contract USDLRebasingCCIP is
 
     /// @notice Convert rebased amount to raw shares
     /// @param rebasedAmount Amount in rebased units
+    /// @param rounding Rounding direction
     /// @return Raw share amount
-    function _toRawShares(uint256 rebasedAmount) internal view returns (uint256) {
+    function _toRawShares(uint256 rebasedAmount, Math.Rounding rounding) internal view returns (uint256) {
         if (rebaseIndex == 0) return rebasedAmount;
-        return (rebasedAmount * REBASE_INDEX_PRECISION) / rebaseIndex;
+        return rebasedAmount.mulDiv(REBASE_INDEX_PRECISION, rebaseIndex, rounding);
     }
 
     /// @notice Convert raw shares to rebased amount
     /// @param rawShares Number of raw shares
+    /// @param rounding Rounding direction
     /// @return Rebased amount
-    function _toRebasedAmount(uint256 rawShares) internal view returns (uint256) {
-        return (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding) internal view returns (uint256) {
+        if (rebaseIndex == 0) return rawShares;
+        return rawShares.mulDiv(rebaseIndex, REBASE_INDEX_PRECISION, rounding);
     }
 }
