@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Yield Accrual and Rebasing", function () {
@@ -22,6 +22,8 @@ describe("USDL - Yield Accrual and Rebasing", function () {
         await usdc.connect(user1).approve(usdlAddress, depositAmount);
         await usdl.connect(user1).deposit(depositAmount, user1.address);
         
+        await mine(5);
+
         return { ...fixture, depositAmount };
     }
 
