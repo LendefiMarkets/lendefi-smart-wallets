@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
-const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, usdlSkyFixture, deployYieldRouter, deployMockYieldVault } = require("./helpers/setup");
 
 const ASSET_TYPE = {
@@ -717,6 +717,10 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+            
             return fixture;
         }
 
@@ -840,6 +844,10 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             await mine(5);
 
             // Check aToken balance
@@ -1034,6 +1042,10 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             await mine(5);
 
             // Check sUSDS balance
@@ -1069,6 +1081,10 @@ describe("YieldRouter - Coverage Tests", function () {
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+            
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
             
             // Verify both have balance
             expect(await yieldVault.balanceOf(await router.getAddress())).to.be.gt(0);
