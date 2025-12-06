@@ -22,6 +22,10 @@ describe("USDL - Yield Accrual and Rebasing", function () {
         await usdc.connect(user1).approve(usdlAddress, depositAmount);
         await usdl.connect(user1).deposit(depositAmount, user1.address);
         
+        // Advance time and call performUpkeep to allocate pending deposits to protocols
+        await time.increase(86401); // 1 day + 1 second
+        await router.performUpkeep("0x");
+        
         await mine(5);
 
         return { ...fixture, depositAmount };
