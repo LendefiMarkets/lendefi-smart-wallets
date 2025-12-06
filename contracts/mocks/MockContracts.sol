@@ -213,6 +213,10 @@ contract MockERC4626Vault {
      * @notice Convert assets to shares (for deposit preview)
      */
     function convertToShares(uint256 assets) external view returns (uint256) {
+        // Handle max uint to prevent overflow
+        if (assets == type(uint256).max) {
+            return type(uint256).max;
+        }
         return (assets * 1e6) / yieldMultiplier;
     }
 
@@ -587,3 +591,278 @@ contract MockSUsds {
         return balanceOf[owner];
     }
 }
+
+/**
+ * @title MockAavePool
+ * @notice Mock Aave V3 Pool for testing
+ */
+contract MockAavePool {
+    MockUSDC public usdc;
+    address public aToken;
+
+    constructor(address _usdc, address _aToken) {
+        usdc = MockUSDC(_usdc);
+        aToken = _aToken;
+    }
+
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
+        require(asset == address(usdc), "Invalid asset");
+        require(usdc.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        MockAUsdc(aToken).mint(onBehalfOf, amount);
+    }
+
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256) {
+        require(asset == address(usdc), "Invalid asset");
+        MockAUsdc(aToken).burn(msg.sender, amount);
+        usdc.mint(to, amount);
+        return amount;
+    }
+
+    function getReserveData(address) external view returns (
+        uint256, uint128, uint128, uint128, uint128, uint128,
+        uint40, uint16, address, address, address, address, uint128, uint128, uint128
+    ) {
+        return (0, 0, 0, 0, 0, 0, 0, 0, aToken, address(0), address(0), address(0), 0, 0, 0);
+    }
+}
+
+/**
+ * @title MockAUsdc
+ * @notice Mock Aave aUSDC token
+ */
+contract MockAUsdc {
+    string public constant name = "Aave USDC";
+    string public constant symbol = "aUSDC";
+    uint8 public constant decimals = 6;
+
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public totalSupply;
+    address public pool;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    constructor() {
+        pool = address(0); // Set later
+    }
+
+    function setPool(address _pool) external {
+        pool = _pool;
+    }
+
+    function mint(address to, uint256 amount) external {
+        // Allow minting from pool or if pool not set
+        if (pool != address(0)) {
+            require(msg.sender == pool, "Only pool");
+        }
+        balanceOf[to] += amount;
+        totalSupply += amount;
+        emit Transfer(address(0), to, amount);
+    }
+
+    function burn(address from, uint256 amount) external {
+        if (pool != address(0)) {
+            require(msg.sender == pool, "Only pool");
+        }
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+        emit Transfer(from, address(0), amount);
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            allowance[from][msg.sender] -= amount;
+        }
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(from, to, amount);
+        return true;
+    }
+}
+
+/**
+ * @title MockOUSG
+ * @notice Mock OUSG token for testing
+ */
+contract MockOUSG {
+    string public constant name = "OUSG Token";
+    string public constant symbol = "OUSG";
+    uint8 public constant decimals = 18;
+
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public totalSupply;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+        emit Transfer(address(0), to, amount);
+    }
+
+    function burn(address from, uint256 amount) external {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+        emit Transfer(from, address(0), amount);
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            allowance[from][msg.sender] -= amount;
+        }
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(from, to, amount);
+        return true;
+    }
+}
+
+/**
+ * @title MockOUSGManager
+ * @notice Mock Ondo OUSG redemption manager
+ */
+contract MockOUSGManager {
+    MockUSDC public usdc;
+    MockOUSG public ousg;
+    uint256 public redemptionRate = 1e18; // 1:1 rate
+
+    constructor(address _usdc, address _ousg) {
+        usdc = MockUSDC(_usdc);
+        ousg = MockOUSG(_ousg);
+    }
+
+    function setRedemptionRate(uint256 _rate) external {
+        redemptionRate = _rate;
+    }
+
+    function requestRedemption(uint256 ousgAmount) external returns (bytes32) {
+        ousg.burn(msg.sender, ousgAmount);
+        uint256 usdcAmount = (ousgAmount * redemptionRate) / 1e18;
+        // Scale from 18 decimals to 6
+        usdcAmount = usdcAmount / 1e12;
+        usdc.mint(msg.sender, usdcAmount);
+        return bytes32(uint256(1));
+    }
+
+    function claimRedemption(bytes32) external {
+        // Already claimed in requestRedemption for simplicity
+    }
+}
+
+/**
+ * @title MockOUSGInstantManager
+ * @notice Mock Ondo OUSG instant redemption manager
+ */
+contract MockOUSGInstantManager {
+    MockUSDC public usdc;
+    MockOUSG public ousg;
+    uint256 public instantRate = 1e18;
+
+    constructor(address _usdc, address _ousg) {
+        usdc = MockUSDC(_usdc);
+        ousg = MockOUSG(_ousg);
+    }
+
+    function mint(uint256 usdcAmount) external returns (uint256) {
+        // Transfer USDC from caller
+        require(usdc.transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
+        // Mint OUSG (scale 6 decimals to 18)
+        uint256 ousgAmount = usdcAmount * 1e12;
+        ousg.mint(msg.sender, ousgAmount);
+        return ousgAmount;
+    }
+
+    function redeem(uint256 ousgAmount) external returns (uint256) {
+        ousg.burn(msg.sender, ousgAmount);
+        uint256 usdcAmount = (ousgAmount * instantRate) / 1e18;
+        usdcAmount = usdcAmount / 1e12;
+        usdc.mint(msg.sender, usdcAmount);
+        return usdcAmount;
+    }
+}
+
+/**
+ * @title MockAdvancedPriceFeed
+ * @notice Mock Chainlink price feed with configurable round data
+ */
+contract MockAdvancedPriceFeed {
+    int256 public price;
+    uint256 public updatedAt;
+    uint80 public roundId;
+    uint80 public answeredInRound;
+    uint8 public constant decimals = 8;
+
+    constructor() {
+        price = 1e8; // $1.00
+        updatedAt = block.timestamp;
+        roundId = 1;
+        answeredInRound = 1;
+    }
+
+    function setPrice(int256 _price) external {
+        price = _price;
+        updatedAt = block.timestamp;
+    }
+
+    function setStalePrice(int256 _price, uint256 _updatedAt) external {
+        price = _price;
+        updatedAt = _updatedAt;
+    }
+
+    function setIncompleteRound(uint80 _roundId, uint80 _answeredInRound) external {
+        roundId = _roundId;
+        answeredInRound = _answeredInRound;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (
+            uint80,
+            int256,
+            uint256,
+            uint256,
+            uint80
+        )
+    {
+        return (roundId, price, block.timestamp, updatedAt, answeredInRound);
+    }
+}
+
