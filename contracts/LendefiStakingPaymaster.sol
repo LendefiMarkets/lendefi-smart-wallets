@@ -92,7 +92,7 @@ contract LendefiStakingPaymaster is BasePaymaster {
         PackedUserOperation calldata userOp,
         bytes32 /*userOpHash*/,
         uint256 maxCost
-    ) internal override returns (bytes memory context, uint256 validationData) {
+    ) internal view override returns (bytes memory context, uint256 validationData) {
         address user = userOp.sender;
         
         // Validate wallet is from our factory
