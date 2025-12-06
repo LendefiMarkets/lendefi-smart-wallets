@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Withdrawals and Redemptions", function () {
@@ -21,6 +21,9 @@ describe("USDL - Withdrawals and Redemptions", function () {
         const depositAmount = ethers.parseUnits("1000", 6);
         await usdc.connect(user1).approve(usdlAddress, depositAmount);
         await usdl.connect(user1).deposit(depositAmount, user1.address);
+        
+        // Mine blocks to pass hold time
+        await mine(5);
         
         return { ...fixture, depositAmount };
     }
@@ -305,6 +308,8 @@ describe("USDL - Withdrawals and Redemptions", function () {
             const depositAmount = ethers.parseUnits("10000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            await mine(5);
 
             const vault1Before = await yieldVault.balanceOf(routerAddress);
             const vault2Before = await yieldVault2.balanceOf(routerAddress);
