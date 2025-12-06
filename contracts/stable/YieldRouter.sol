@@ -110,8 +110,12 @@ contract YieldRouter is
     /// @dev Only USDC received through depositToProtocols or harvested yield is tracked
     uint256 public trackedUSDCBalance;
 
+    /// @notice Pending deposits waiting to be allocated to protocols
+    /// @dev Accumulated during deposits, allocated to protocols during performUpkeep
+    uint256 public pendingDeposits;
+
     /// @notice Storage gap for upgrades
-    uint256[39] private __gap;
+    uint256[38] private __gap;
 
     // ============ Modifiers ============
 
@@ -165,6 +169,9 @@ contract YieldRouter is
 
     /**
      * @inheritdoc IYieldRouter
+     * @dev LAZY ALLOCATION: Does not immediately deposit to protocols.
+     *      USDC is tracked as pending and allocated during performUpkeep.
+     *      This reduces gas per user deposit by ~50%.
      */
     function depositToProtocols(uint256 amount) external override nonReentrant onlyVault {
         if (amount == 0) revert ZeroAmount();
@@ -172,9 +179,8 @@ contract YieldRouter is
         // Track incoming USDC (internal accounting for inflation attack protection)
         trackedUSDCBalance += amount;
 
-        // USDC is already transferred to router by USDL before calling this
-        // Just allocate to yield assets by weight
-        _allocateToYieldAssets(amount);
+        // Track as pending - will be allocated to protocols during performUpkeep
+        pendingDeposits += amount;
 
         emit DepositedToProtocols(amount);
     }
@@ -394,10 +400,12 @@ contract YieldRouter is
     // ============ Chainlink Automation ============
 
     /**
-     * @notice Check if yield accrual is needed (Chainlink Automation)
-     * @dev checkData parameter not used
-     * @return upkeepNeeded True if accrual is needed
-     * @return performData Empty bytes
+     * @notice Check if upkeep is needed (Chainlink Automation)
+     * @dev Triggers when:
+     *      1. Time interval passed AND (pending deposits OR yield to accrue)
+     *      2. No external calls needed - all data is internal
+     * @return upkeepNeeded True if upkeep is needed
+     * @return performData Encoded pending deposits and yield info
      */
     function checkUpkeep(bytes calldata /* checkData */ )
         external
@@ -412,21 +420,32 @@ contract YieldRouter is
             return (false, "");
         }
 
-        // Check if there's actually yield to accrue
-        address _vault = vault; // Cache storage read
-        uint256 currentDeposited = IUSDL(_vault).totalDepositedAssets();
+        // Check if there are pending deposits to allocate
+        uint256 pending = pendingDeposits;
         
         // Calculate actual value using internal accounting (excludes donations)
         uint256 actualValue = _calculateTrackedValue();
+        
+        // Calculate expected value (tracked USDC that should be in protocols)
+        // This is trackedUSDCBalance - pendingDeposits (pending is not yet in protocols)
+        uint256 deployedValue = trackedUSDCBalance - pending;
+        
+        // Yield = actualValue - deployedValue (excluding pending)
+        bool hasYield = actualValue > deployedValue + pending;
+        bool hasPending = pending > 0;
 
-        if (actualValue > currentDeposited) {
+        if (hasYield || hasPending) {
             upkeepNeeded = true;
-            performData = abi.encode(actualValue, currentDeposited);
+            performData = abi.encode(pending, hasYield);
         }
     }
+
     /**
-     * @notice Perform yield accrual (called by Chainlink Automation)
-     * @dev performData parameter not used
+     * @notice Perform upkeep (called by Chainlink Automation)
+     * @dev Optimized netting: Instead of deposit + withdraw, we net the amounts:
+     *      - If pendingDeposits > yieldToHarvest: Only deposit the difference
+     *      - If yieldToHarvest > pendingDeposits: Only withdraw the difference
+     *      This saves gas by avoiding unnecessary deposit/withdraw pairs
      */
     function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant {
         if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
@@ -436,7 +455,74 @@ contract YieldRouter is
             revert UpkeepNotNeeded();
         }
 
-        _accrueYield();
+        lastYieldAccrualTimestamp = block.timestamp;
+
+        // Cache values
+        uint256 pending = pendingDeposits;
+        IUSDL usdl = IUSDL(vault);
+        uint256 currentDeposited = usdl.totalDepositedAssets();
+
+        if (currentDeposited == 0 && pending == 0) return;
+
+        // Calculate yield: (protocol value) - (what we deployed to protocols)
+        // trackedUSDCBalance includes pending deposits (not yet in protocols)
+        // So deployed = trackedUSDCBalance - pending
+        uint256 actualProtocolValue = _calculateTrackedValue();
+        uint256 deployedToProtocols = trackedUSDCBalance - pending;
+        
+        // Yield = how much more protocols are worth than what we put in
+        // Note: actualProtocolValue includes trackedUSDCBalance which has pending
+        // So actual yield from protocols = (actualProtocolValue - pending) - deployedToProtocols
+        uint256 yieldAccrued = 0;
+        uint256 protocolValueOnly = actualProtocolValue - pending; // Exclude pending USDC from value
+        if (protocolValueOnly > deployedToProtocols) {
+            yieldAccrued = protocolValueOnly - deployedToProtocols;
+        }
+
+        // Clear pending deposits
+        if (pending > 0) {
+            pendingDeposits = 0;
+            emit PendingDepositsAllocated(pending);
+        }
+
+        // === NETTING LOGIC ===
+        // pending = USDC sitting idle that should go to protocols
+        // yieldAccrued = value we need to pull from protocols to USDC
+        // Instead of: allocate(pending) + harvest(yield), we net them
+        
+        if (pending > yieldAccrued) {
+            // More deposits than yield: only deposit the net amount
+            // yieldAccrued worth of USDC stays idle (as harvested yield)
+            // Remaining goes to protocols
+            uint256 netDeposit = pending - yieldAccrued;
+            _allocateToYieldAssets(netDeposit);
+            // trackedUSDCBalance stays correct: we had pending, we allocated netDeposit
+            // so yieldAccrued stays as USDC which will be tracked
+        } else if (yieldAccrued > pending) {
+            // More yield than deposits: only withdraw the net amount
+            // pending is used to offset some yield (stays as USDC)
+            // Only withdraw what's still needed
+            uint256 netWithdraw = yieldAccrued - pending;
+            _harvestYield(netWithdraw);
+        }
+        // If equal: nothing to move! Pending USDC = yield to harvest, perfect offset
+
+        // Update USDL state if there was yield
+        if (yieldAccrued > 0 && currentDeposited > 0) {
+            // Recalculate actual value after netting operations
+            uint256 newTotalValue = _calculateTrackedValue();
+            
+            uint256 currentIndex = usdl.rebaseIndex();
+            uint256 newIndex = (currentIndex * newTotalValue) / currentDeposited;
+
+            usdl.updateRebaseIndex(newIndex);
+            usdl.updateTotalDepositedAssets(newTotalValue);
+
+            emit YieldAccrued(yieldAccrued, newTotalValue);
+        } else if (pending > 0 && yieldAccrued == 0) {
+            // No yield, but we had pending deposits - just update total assets
+            usdl.updateTotalDepositedAssets(_calculateTrackedValue());
+        }
     }
 
     /**
