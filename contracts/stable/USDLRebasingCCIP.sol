@@ -96,18 +96,18 @@ contract USDLRebasingCCIP is
     }
 
     /// @notice Initialize the contract
-    /// @param _owner Owner and admin address
+    /// @param _multisig Owner and admin address (Multisig)
     /// @param _priceFeed Chainlink price feed address (USDL price in USD)
-    function initialize(address _owner, address _priceFeed) external initializer {
+    function initialize(address _multisig, address _priceFeed) external initializer {
         __ERC20_init("Lendefi USD V3 (CCIP)", "USDL");
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _owner);
-        _grantRole(UPGRADER_ROLE, _owner);
-        _grantRole(MANAGER_ROLE, _owner);
+        _grantRole(DEFAULT_ADMIN_ROLE, _multisig);
+        _grantRole(UPGRADER_ROLE, _multisig);
+        _grantRole(MANAGER_ROLE, _multisig);
 
-        ccipAdmin = _owner;
+        ccipAdmin = _multisig;
         priceFeed = IAggregatorV3Interface(_priceFeed);
         rebaseIndex = REBASE_INDEX_PRECISION; // Start at 1.0
     }
