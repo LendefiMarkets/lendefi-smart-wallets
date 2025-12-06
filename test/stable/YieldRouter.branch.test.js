@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, usdlSkyFixture, deployMockYieldVault } = require("./helpers/setup");
 
 const ASSET_TYPE = {
@@ -473,6 +473,10 @@ describe("YieldRouter - Branch Coverage", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), ethers.parseUnits("1000", 6));
             await usdl.connect(user1).deposit(ethers.parseUnits("1000", 6), user1.address);
             
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+            
             return fixture;
         }
 
@@ -619,6 +623,10 @@ describe("YieldRouter - Branch Coverage", function () {
             
             await usdc.connect(user1).approve(await usdl.getAddress(), ethers.parseUnits("1000", 6));
             await usdl.connect(user1).deposit(ethers.parseUnits("1000", 6), user1.address);
+            
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
             
             expect(await yieldVault.balanceOf(await router.getAddress())).to.be.gt(0);
             expect(await yieldVault2.balanceOf(await router.getAddress())).to.be.gt(0);
