@@ -458,14 +458,25 @@ contract USDL is
         if (receiver == address(0)) revert ZeroAddress();
         if (receiver == address(this)) revert InvalidRecipient(receiver);
 
-        uint256 rawShares = _convertToShares(assets, Math.Rounding.Floor);
+        // Cache storage
+        uint256 totalAssets_ = totalDepositedAssets;
+        uint256 totalShares_ = _totalShares;
+
+        // Calculate shares using cached values (inline _convertToShares)
+        uint256 rawShares;
+        if (totalShares_ == 0 || totalAssets_ == 0) {
+            rawShares = assets;
+        } else {
+            rawShares = assets.mulDiv(totalShares_, totalAssets_, Math.Rounding.Floor);
+        }
+
         if (rawShares == 0) revert ZeroAmount();
 
         // Transfer USDC from sender to this contract
         IERC20(assetAddress).safeTransferFrom(msg.sender, address(this), assets);
 
         // Update internal accounting
-        totalDepositedAssets += assets;
+        totalDepositedAssets = totalAssets_ + assets;
 
         // Transfer to router and deposit to protocols
         IERC20(assetAddress).safeTransfer(address(yieldRouter), assets);
@@ -499,7 +510,17 @@ contract USDL is
         if (receiver == address(this)) revert InvalidRecipient(receiver);
 
         uint256 rawShares = _toRawShares(shares, Math.Rounding.Ceil);
-        assets = _convertToAssets(rawShares, Math.Rounding.Ceil);
+        
+        // Cache storage
+        uint256 totalAssets_ = totalDepositedAssets;
+        uint256 totalShares_ = _totalShares;
+
+        // Calculate assets using cached values (inline _convertToAssets)
+        if (totalShares_ == 0 || totalAssets_ == 0) {
+            assets = rawShares;
+        } else {
+            assets = rawShares.mulDiv(totalAssets_, totalShares_, Math.Rounding.Ceil);
+        }
 
         if (assets < MIN_DEPOSIT) {
             revert BelowMinimumDeposit(assets, MIN_DEPOSIT);
@@ -509,7 +530,7 @@ contract USDL is
         IERC20(assetAddress).safeTransferFrom(msg.sender, address(this), assets);
 
         // Update internal accounting
-        totalDepositedAssets += assets;
+        totalDepositedAssets = totalAssets_ + assets;
 
         // Transfer to router and deposit to protocols
         IERC20(assetAddress).safeTransfer(address(yieldRouter), assets);
@@ -541,14 +562,24 @@ contract USDL is
     {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        if (block.number < lastDepositBlock[owner] + MIN_HOLD_BLOCKS) {
-            revert MinHoldPeriodNotReached(block.number, lastDepositBlock[owner] + MIN_HOLD_BLOCKS);
-        }
-        if (assets > totalDepositedAssets) {
-            revert InsufficientLiquidity(assets, totalDepositedAssets);
+        
+        uint256 lastDeposit = lastDepositBlock[owner];
+        if (block.number < lastDeposit + MIN_HOLD_BLOCKS) {
+            revert MinHoldPeriodNotReached(block.number, lastDeposit + MIN_HOLD_BLOCKS);
         }
 
-        uint256 rawShares = _convertToShares(assets, Math.Rounding.Ceil);
+        // Cache storage
+        uint256 totalAssets_ = totalDepositedAssets;
+        uint256 totalShares_ = _totalShares;
+
+        // Calculate shares using cached values (inline _convertToShares)
+        uint256 rawShares;
+        if (totalShares_ == 0 || totalAssets_ == 0) {
+            rawShares = assets;
+        } else {
+            rawShares = assets.mulDiv(totalShares_, totalAssets_, Math.Rounding.Ceil);
+        }
+
         shares = _toRebasedAmount(rawShares, Math.Rounding.Ceil);
 
         if (msg.sender != owner) {
@@ -559,7 +590,8 @@ contract USDL is
         uint256 netAssets = assets - fee;
 
         // Update internal accounting
-        totalDepositedAssets -= assets;
+        if (assets > totalAssets_) revert InsufficientLiquidity(assets, totalAssets_);
+        totalDepositedAssets = totalAssets_ - assets;
 
         // Redeem from router
         yieldRouter.redeemFromProtocols(assets);
@@ -597,8 +629,10 @@ contract USDL is
     {
         if (shares == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        if (block.number < lastDepositBlock[owner] + MIN_HOLD_BLOCKS) {
-            revert MinHoldPeriodNotReached(block.number, lastDepositBlock[owner] + MIN_HOLD_BLOCKS);
+        
+        uint256 lastDeposit = lastDepositBlock[owner];
+        if (block.number < lastDeposit + MIN_HOLD_BLOCKS) {
+            revert MinHoldPeriodNotReached(block.number, lastDeposit + MIN_HOLD_BLOCKS);
         }
 
         if (msg.sender != owner) {
@@ -606,15 +640,25 @@ contract USDL is
         }
 
         uint256 rawShares = _toRawShares(shares, Math.Rounding.Floor);
-        assets = _convertToAssets(rawShares, Math.Rounding.Floor);
+        
+        // Cache storage
+        uint256 totalAssets_ = totalDepositedAssets;
+        uint256 totalShares_ = _totalShares;
 
-        uint256 deposited = totalDepositedAssets;
-        if (assets > deposited) {
-            assets = deposited;
+        // Calculate assets using cached values (inline _convertToAssets)
+        if (totalShares_ == 0 || totalAssets_ == 0) {
+            assets = rawShares;
+        } else {
+            assets = rawShares.mulDiv(totalAssets_, totalShares_, Math.Rounding.Floor);
+        }
+
+        // Cap assets to available liquidity
+        if (assets > totalAssets_) {
+            assets = totalAssets_;
         }
 
         // Update internal accounting
-        totalDepositedAssets -= assets;
+        totalDepositedAssets = totalAssets_ - assets;
 
         // Redeem from router - use actual amount received
         uint256 redeemed = yieldRouter.redeemFromProtocols(assets);
