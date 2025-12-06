@@ -62,6 +62,9 @@ contract USDL is
     /// @notice Precision for rebase index (1e6 for 6 decimal token)
     uint256 public constant REBASE_INDEX_PRECISION = 1e6;
 
+    /// @notice Minimum hold time in blocks to prevent flash loan/sandwich attacks
+    uint256 public constant MIN_HOLD_BLOCKS = 5;
+
     /// @dev AccessControl Role Constants
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");
@@ -115,8 +118,11 @@ contract USDL is
     /// @notice Allowances (stored in REBASED units for UX consistency)
     mapping(address => mapping(address => uint256)) private _allowances;
 
+    /// @notice Last deposit block number for each account
+    mapping(address => uint256) public lastDepositBlock;
+
     /// @notice Storage gap for future upgrades
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 
     // ============ Events ============
 
@@ -145,6 +151,7 @@ contract USDL is
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed);
     error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed);
+    error MinHoldPeriodNotReached(uint256 currentBlock, uint256 unlockBlock);
     error RouterNotSet();
 
     // ============ Modifiers ============
@@ -180,12 +187,12 @@ contract USDL is
 
     /**
      * @notice Initialize the USDL vault
-     * @param _owner Owner/admin address
+     * @param _multisig Owner/admin address (Multisig)
      * @param _usdc USDC token address (underlying asset)
      * @param _treasury Treasury address for fees
      */
-    function initialize(address _owner, address _usdc, address _treasury) external initializer {
-        if (_owner == address(0)) revert ZeroAddress();
+    function initialize(address _multisig, address _usdc, address _treasury) external initializer {
+        if (_multisig == address(0)) revert ZeroAddress();
         if (_usdc == address(0)) revert ZeroAddress();
         if (_treasury == address(0)) revert ZeroAddress();
 
@@ -197,13 +204,13 @@ contract USDL is
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _owner);
-        _grantRole(PAUSER_ROLE, _owner);
-        _grantRole(UPGRADER_ROLE, _owner);
-        _grantRole(BLACKLISTER_ROLE, _owner);
+        _grantRole(DEFAULT_ADMIN_ROLE, _multisig);
+        _grantRole(PAUSER_ROLE, _multisig);
+        _grantRole(UPGRADER_ROLE, _multisig);
+        _grantRole(BLACKLISTER_ROLE, _multisig);
 
         version = 4;
-        ccipAdmin = _owner;
+        ccipAdmin = _multisig;
         treasury = _treasury;
         assetAddress = _usdc;
         redemptionFeeBps = 10; // 0.1%
@@ -466,6 +473,7 @@ contract USDL is
 
         // Mint shares
         _mintShares(receiver, rawShares);
+        lastDepositBlock[receiver] = block.number;
         shares = _toRebasedAmount(rawShares, Math.Rounding.Floor);
 
         emit Deposit(msg.sender, receiver, assets, shares);
@@ -509,6 +517,7 @@ contract USDL is
 
         // Mint shares
         _mintShares(receiver, rawShares);
+        lastDepositBlock[receiver] = block.number;
 
         emit Deposit(msg.sender, receiver, assets, shares);
     }
@@ -532,6 +541,9 @@ contract USDL is
     {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
+        if (block.number < lastDepositBlock[owner] + MIN_HOLD_BLOCKS) {
+            revert MinHoldPeriodNotReached(block.number, lastDepositBlock[owner] + MIN_HOLD_BLOCKS);
+        }
         if (assets > totalDepositedAssets) {
             revert InsufficientLiquidity(assets, totalDepositedAssets);
         }
@@ -585,6 +597,9 @@ contract USDL is
     {
         if (shares == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
+        if (block.number < lastDepositBlock[owner] + MIN_HOLD_BLOCKS) {
+            revert MinHoldPeriodNotReached(block.number, lastDepositBlock[owner] + MIN_HOLD_BLOCKS);
+        }
 
         if (msg.sender != owner) {
             _spendAllowance(owner, msg.sender, shares);
@@ -841,6 +856,7 @@ contract USDL is
             _shares[from] = fromShares - rawShares;
         }
         _shares[to] += rawShares;
+        lastDepositBlock[to] = block.number;
 
         uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(from, to, rebasedAmount);
