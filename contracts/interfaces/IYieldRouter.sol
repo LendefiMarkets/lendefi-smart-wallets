@@ -78,6 +78,10 @@ interface IYieldRouter {
     /// @param amount Amount rescued (indexed for gas optimization)
     event DonatedTokensRescued(address indexed to, uint256 indexed amount);
 
+    /// @notice Emitted when pending deposits are allocated to protocols
+    /// @param amount Amount of USDC allocated (indexed for gas optimization)
+    event PendingDepositsAllocated(uint256 indexed amount);
+
     // ============ Errors ============
 
     /// @notice Thrown when zero address is provided
