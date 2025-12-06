@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Yield Asset Management", function () {
@@ -270,6 +270,10 @@ describe("USDL - Yield Asset Management", function () {
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep to allocate pending deposits to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             // Verify funds are in yieldVault (held by router, not USDL)
             expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
