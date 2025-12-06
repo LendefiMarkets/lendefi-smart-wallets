@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, ASSET_TYPE } = require("./helpers/setup");
 
 describe("USDL - Deposits and Mints", function () {
@@ -80,8 +80,16 @@ describe("USDL - Deposits and Mints", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
-            // Router holds the vault shares, not USDL
+            // With lazy deposits, funds are pending in router
+            expect(await router.pendingDeposits()).to.equal(depositAmount);
+            
+            // Advance time and call performUpkeep to allocate to protocols
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+            
+            // Now router holds the vault shares
             expect(await yieldVault.balanceOf(routerAddress)).to.equal(depositAmount);
+            expect(await router.pendingDeposits()).to.equal(0);
         });
 
         it("Should revert if below minimum deposit", async function () {
@@ -288,6 +296,10 @@ describe("USDL - Deposits and Mints", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
+            // Advance time and call performUpkeep to allocate pending deposits
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             // Yield tokens are held by router, not USDL
             expect(await yieldVault.balanceOf(routerAddress)).to.equal(depositAmount);
         });
@@ -309,6 +321,10 @@ describe("USDL - Deposits and Mints", function () {
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep to allocate pending deposits
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             const vault1Balance = await yieldVault.balanceOf(routerAddress);
             const vault2Balance = await yieldVault2.balanceOf(routerAddress);
@@ -338,6 +354,10 @@ describe("USDL - Deposits and Mints", function () {
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
 
+            // Advance time and call performUpkeep to allocate pending deposits
+            await time.increase(86401);
+            await router.performUpkeep("0x");
+
             expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
             expect(await yieldVault2.balanceOf(routerAddress)).to.equal(0);
         });
@@ -356,6 +376,10 @@ describe("USDL - Deposits and Mints", function () {
             const depositAmount = ethers.parseUnits("1000", 6);
             await usdc.connect(user1).approve(usdlAddress, depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
+
+            // Advance time and call performUpkeep - funds stay as USDC when no active assets
+            await time.increase(86401);
+            await router.performUpkeep("0x");
 
             // USDC should be in router when no active assets
             expect(await usdc.balanceOf(routerAddress)).to.equal(depositAmount);
