@@ -421,7 +421,7 @@ contract USDL is
         if (account == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 rebasedAmount = _toRebasedAmount(amount);
+        uint256 rebasedAmount = _toRebasedAmount(amount, Math.Rounding.Ceil);
         _spendAllowance(account, msg.sender, rebasedAmount);
 
         _burnSharesCCIP(account, amount);
@@ -466,7 +466,7 @@ contract USDL is
 
         // Mint shares
         _mintShares(receiver, rawShares);
-        shares = _toRebasedAmount(rawShares);
+        shares = _toRebasedAmount(rawShares, Math.Rounding.Floor);
 
         emit Deposit(msg.sender, receiver, assets, shares);
     }
@@ -490,7 +490,7 @@ contract USDL is
         if (receiver == address(0)) revert ZeroAddress();
         if (receiver == address(this)) revert InvalidRecipient(receiver);
 
-        uint256 rawShares = _toRawShares(shares);
+        uint256 rawShares = _toRawShares(shares, Math.Rounding.Ceil);
         assets = _convertToAssets(rawShares, Math.Rounding.Ceil);
 
         if (assets < MIN_DEPOSIT) {
@@ -537,7 +537,7 @@ contract USDL is
         }
 
         uint256 rawShares = _convertToShares(assets, Math.Rounding.Ceil);
-        shares = _toRebasedAmount(rawShares);
+        shares = _toRebasedAmount(rawShares, Math.Rounding.Ceil);
 
         if (msg.sender != owner) {
             _spendAllowance(owner, msg.sender, shares);
@@ -590,7 +590,7 @@ contract USDL is
             _spendAllowance(owner, msg.sender, shares);
         }
 
-        uint256 rawShares = _toRawShares(shares);
+        uint256 rawShares = _toRawShares(shares, Math.Rounding.Floor);
         assets = _convertToAssets(rawShares, Math.Rounding.Floor);
 
         uint256 deposited = totalDepositedAssets;
@@ -625,13 +625,13 @@ contract USDL is
     // ============ ERC20 Functions ============
 
     function transfer(address to, uint256 value) public override whenNotPaused returns (bool) {
-        _transferShares(msg.sender, to, _toRawShares(value));
+        _transferShares(msg.sender, to, _toRawShares(value, Math.Rounding.Floor));
         return true;
     }
 
     function transferFrom(address from, address to, uint256 value) public override whenNotPaused returns (bool) {
         _spendAllowance(from, msg.sender, value);
-        _transferShares(from, to, _toRawShares(value));
+        _transferShares(from, to, _toRawShares(value, Math.Rounding.Floor));
         return true;
     }
 
@@ -657,11 +657,11 @@ contract USDL is
     }
 
     function totalSupply() public view override returns (uint256) {
-        return (_totalShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        return _toRebasedAmount(_totalShares, Math.Rounding.Floor);
     }
 
     function balanceOf(address account) public view override returns (uint256) {
-        return (_shares[account] * rebaseIndex) / REBASE_INDEX_PRECISION;
+        return _toRebasedAmount(_shares[account], Math.Rounding.Floor);
     }
 
     function allowance(address owner, address spender) public view override returns (uint256) {
@@ -678,21 +678,21 @@ contract USDL is
 
     function previewDeposit(uint256 assets) public view override returns (uint256) {
         uint256 rawShares = _convertToShares(assets, Math.Rounding.Floor);
-        return _toRebasedAmount(rawShares);
+        return _toRebasedAmount(rawShares, Math.Rounding.Floor);
     }
 
     function previewMint(uint256 shares) public view override returns (uint256) {
-        uint256 rawShares = _toRawShares(shares);
+        uint256 rawShares = _toRawShares(shares, Math.Rounding.Ceil);
         return _convertToAssets(rawShares, Math.Rounding.Ceil);
     }
 
     function previewWithdraw(uint256 assets) public view override returns (uint256) {
         uint256 rawShares = _convertToShares(assets, Math.Rounding.Ceil);
-        return _toRebasedAmount(rawShares);
+        return _toRebasedAmount(rawShares, Math.Rounding.Ceil);
     }
 
     function previewRedeem(uint256 shares) public view override returns (uint256) {
-        uint256 rawShares = _toRawShares(shares);
+        uint256 rawShares = _toRawShares(shares, Math.Rounding.Floor);
         uint256 assets = _convertToAssets(rawShares, Math.Rounding.Floor);
         uint256 fee = (assets * redemptionFeeBps) / BASIS_POINTS;
         return assets - fee;
@@ -700,11 +700,11 @@ contract USDL is
 
     function convertToShares(uint256 assets) public view override returns (uint256) {
         uint256 rawShares = _convertToShares(assets, Math.Rounding.Floor);
-        return _toRebasedAmount(rawShares);
+        return _toRebasedAmount(rawShares, Math.Rounding.Floor);
     }
 
     function convertToAssets(uint256 shares) public view override returns (uint256) {
-        uint256 rawShares = _toRawShares(shares);
+        uint256 rawShares = _toRawShares(shares, Math.Rounding.Floor);
         return _convertToAssets(rawShares, Math.Rounding.Floor);
     }
 
@@ -778,7 +778,7 @@ contract USDL is
         _shares[account] += rawShares;
         _totalShares += rawShares;
 
-        uint256 rebasedAmount = (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(address(0), account, rebasedAmount);
     }
 
@@ -795,7 +795,7 @@ contract USDL is
         }
         _totalShares -= rawShares;
 
-        uint256 rebasedAmount = (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(account, address(0), rebasedAmount);
     }
 
@@ -805,7 +805,7 @@ contract USDL is
         _shares[account] += rawShares;
         // NOTE: Do NOT increment _totalShares for CCIP mints
 
-        uint256 rebasedAmount = (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(address(0), account, rebasedAmount);
     }
 
@@ -822,7 +822,7 @@ contract USDL is
         }
         // NOTE: Do NOT decrement _totalShares for CCIP burns
 
-        uint256 rebasedAmount = (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(account, address(0), rebasedAmount);
     }
 
@@ -842,7 +842,7 @@ contract USDL is
         }
         _shares[to] += rawShares;
 
-        uint256 rebasedAmount = (rawShares * rebaseIndex) / REBASE_INDEX_PRECISION;
+        uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(from, to, rebasedAmount);
     }
 
@@ -893,13 +893,13 @@ contract USDL is
         return shares.mulDiv(depositedAssets, supply, rounding);
     }
 
-    function _toRawShares(uint256 rebasedAmount) internal view returns (uint256 rawShares) {
+    function _toRawShares(uint256 rebasedAmount, Math.Rounding rounding) internal view returns (uint256 rawShares) {
         if (rebaseIndex == 0) return rebasedAmount;
-        return rebasedAmount * REBASE_INDEX_PRECISION / rebaseIndex;
+        return rebasedAmount.mulDiv(REBASE_INDEX_PRECISION, rebaseIndex, rounding);
     }
 
-    function _toRebasedAmount(uint256 rawShares) internal view returns (uint256 rebasedAmount) {
+    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding) internal view returns (uint256 rebasedAmount) {
         if (rebaseIndex == 0) return rawShares;
-        return rawShares * rebaseIndex / REBASE_INDEX_PRECISION;
+        return rawShares.mulDiv(rebaseIndex, REBASE_INDEX_PRECISION, rounding);
     }
 }
