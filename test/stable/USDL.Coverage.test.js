@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { usdlFixture, usdlSkyFixture, deployYieldRouter, deployMockYieldVault } = require("./helpers/setup");
 
 const ASSET_TYPE = {
@@ -254,6 +254,8 @@ describe("USDL - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            await mine(5);
+
             return fixture;
         }
 
@@ -289,6 +291,8 @@ describe("USDL - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            await mine(5);
+
             return fixture;
         }
 
@@ -836,6 +840,8 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            await mine(5);
+
             // Check aToken balance
             expect(await aToken.balanceOf(await router.getAddress())).to.equal(depositAmount);
             
@@ -909,6 +915,8 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            await mine(5);
+
             // Redeem
             const balance = await usdl.balanceOf(user1.address);
             await usdl.connect(user1).redeem(balance, user1.address, user1.address);
@@ -1026,6 +1034,8 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdc.connect(user1).approve(await usdl.getAddress(), depositAmount);
             await usdl.connect(user1).deposit(depositAmount, user1.address);
             
+            await mine(5);
+
             // Check sUSDS balance
             expect(await sUsds.balanceOf(await router.getAddress())).to.be.gt(0);
             
