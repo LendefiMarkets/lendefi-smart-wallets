@@ -74,29 +74,17 @@ interface IAaveV3Pool {
 // ============ Ondo OUSG Interface (Optional) ============
 
 /**
- * @title IRWAOracle
- * @notice Interface for Ondo RWA Oracle (Chainlink-compatible)
- * @dev Mainnet OUSG Oracle: 0xc53e6824480d976180A65415c19A6931D17265BA
+ * @title IOndoOracle
+ * @notice Interface for Ondo Oracle
+ * @dev Returns price with 18 decimals
  */
-interface IRWAOracle {
+interface IOndoOracle {
     /**
-     * @notice Get the latest price data
-     * @return roundId The round ID
-     * @return answer The price (scaled by decimals())
-     * @return startedAt Timestamp when round started
-     * @return updatedAt Timestamp when round was updated
-     * @return answeredInRound The round ID in which the answer was computed
+     * @notice Get the price of an asset
+     * @param token The asset address to get price for
+     * @return price The price (scaled by 1e18)
      */
-    function latestRoundData()
-        external
-        view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
-
-    /**
-     * @notice Get the price decimals
-     * @return The number of decimals in the price
-     */
-    function decimals() external view returns (uint8);
+    function getAssetPrice(address token) external view returns (uint256 price);
 }
 
 /**
@@ -107,33 +95,50 @@ interface IRWAOracle {
  */
 interface IOUSGInstantManager {
     /**
-     * @notice Mint OUSG tokens with USDC
-     * @param usdcAmountIn Amount of USDC to convert
-     * @return ousgAmountOut Amount of OUSG received
+     * @notice Subscribe to OUSG by depositing a supported token
+     * @param depositToken Address of the deposit token (e.g., USDC)
+     * @param depositAmount Amount of deposit token to convert
+     * @param minimumRwaReceived Minimum amount of OUSG to receive (slippage protection)
+     * @return rwaAmountOut Amount of OUSG received
      */
-    function mint(uint256 usdcAmountIn) external returns (uint256 ousgAmountOut);
+    function subscribe(
+        address depositToken,
+        uint256 depositAmount,
+        uint256 minimumRwaReceived
+    ) external returns (uint256 rwaAmountOut);
 
     /**
-     * @notice Redeem OUSG for USDC
-     * @param ousgAmountIn Amount of OUSG to redeem
-     * @return usdcAmountOut Amount of USDC received
+     * @notice Redeem OUSG for a supported token
+     * @param rwaAmount Amount of OUSG to redeem
+     * @param receivingToken Address of the token to receive (e.g., USDC)
+     * @param minimumTokenReceived Minimum amount of tokens to receive (slippage protection)
+     * @return receiveTokenAmount Amount of tokens received
      */
-    function redeem(uint256 ousgAmountIn) external returns (uint256 usdcAmountOut);
+    function redeem(
+        uint256 rwaAmount,
+        address receivingToken,
+        uint256 minimumTokenReceived
+    ) external returns (uint256 receiveTokenAmount);
 
     /**
-     * @notice Get the current OUSG price (USDC per OUSG)
+     * @notice Minimum deposit amount in USD (scaled by 1e18)
      */
-    function getOUSGPrice() external view returns (uint256);
+    function minimumDepositUSD() external view returns (uint256);
 
     /**
-     * @notice Minimum USDC amount for minting
+     * @notice Minimum redemption amount in USD (scaled by 1e18)
      */
-    function minimumDepositAmount() external view returns (uint256);
+    function minimumRedemptionUSD() external view returns (uint256);
 
     /**
-     * @notice Minimum OUSG amount for redeeming
+     * @notice Get the OUSG token address
      */
-    function minimumRedemptionAmount() external view returns (uint256);
+    function rwaToken() external view returns (address);
+
+    /**
+     * @notice Get the Ondo oracle address for price data
+     */
+    function ondoOracle() external view returns (address);
 }
 
 /**
