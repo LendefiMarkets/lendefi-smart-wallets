@@ -906,8 +906,17 @@ describe("YieldRouter - Coverage Tests", function () {
             const ousg = await MockOUSG.deploy();
             await ousg.waitForDeployment();
             
+            // Deploy mock Ondo oracle (required by InstantManager)
+            const MockOndoOracle = await ethers.getContractFactory("MockOndoOracle");
+            const oracle = await MockOndoOracle.deploy();
+            await oracle.waitForDeployment();
+            
             const MockOUSGInstantManager = await ethers.getContractFactory("MockOUSGInstantManager");
-            const ousgManager = await MockOUSGInstantManager.deploy(await usdc.getAddress(), await ousg.getAddress());
+            const ousgManager = await MockOUSGInstantManager.deploy(
+                await usdc.getAddress(),
+                await ousg.getAddress(),
+                await oracle.getAddress()
+            );
             await ousgManager.waitForDeployment();
             
             await router.connect(manager).addYieldAsset(
@@ -930,30 +939,39 @@ describe("YieldRouter - Coverage Tests", function () {
             await usdl.connect(user1).redeem(balance, user1.address, user1.address);
         });
 
-        it("Should validate OUSG oracle - stale price", async function () {
+        it("Should validate OUSG oracle - zero price reverts with InvalidOraclePrice", async function () {
+            // This test validates that the YieldRouter correctly handles zero price
+            // from the Ondo oracle when calculating OUSG value
             const fixture = await usdlFixture();
             const { router, manager, usdc } = fixture;
             
-            // Deploy OUSG mocks
+            // Deploy OUSG mock
             const MockOUSG = await ethers.getContractFactory("MockOUSG");
             const ousg = await MockOUSG.deploy();
             await ousg.waitForDeployment();
             
-            // Deploy mock oracle with stale data
-            const MockAdvancedPriceFeed = await ethers.getContractFactory("MockAdvancedPriceFeed");
-            const oracle = await MockAdvancedPriceFeed.deploy();
+            // Deploy mock Ondo oracle with zero price
+            const MockOndoOracle = await ethers.getContractFactory("MockOndoOracle");
+            const oracle = await MockOndoOracle.deploy();
             await oracle.waitForDeployment();
             
-            // Set stale price (2 hours old)
-            const staleTime = Math.floor(Date.now() / 1000) - 7200;
-            await oracle.setStalePrice(ethers.parseUnits("113", 8), staleTime);
+            // Set zero price (invalid)
+            await oracle.setPrice(0);
             
-            // Add OUSG with oracle as manager (for value calculation)
-            // Note: This uses oracle as manager which is the design for OUSG value calculation
+            // Deploy mock InstantManager with the oracle
+            const MockOUSGInstantManager = await ethers.getContractFactory("MockOUSGInstantManager");
+            const instantManager = await MockOUSGInstantManager.deploy(
+                await usdc.getAddress(),
+                await ousg.getAddress(),
+                await oracle.getAddress()
+            );
+            await instantManager.waitForDeployment();
+            
+            // Add OUSG with InstantManager as manager (for value calculation via ondoOracle())
             await router.connect(manager).addYieldAsset(
                 await ousg.getAddress(),
                 await usdc.getAddress(),
-                await oracle.getAddress(),
+                await instantManager.getAddress(),
                 ASSET_TYPE.ONDO_OUSG
             );
             
@@ -963,64 +981,58 @@ describe("YieldRouter - Coverage Tests", function () {
             // Mint some OUSG directly to router to trigger value calculation
             await ousg.mint(await router.getAddress(), ethers.parseUnits("100", 18));
             
-            // getTotalValue should revert with stale oracle
-            await expect(router.getTotalValue()).to.be.revertedWithCustomError(router, "StaleOraclePrice");
-        });
-
-        it("Should validate OUSG oracle - invalid price", async function () {
-            const fixture = await usdlFixture();
-            const { router, manager, usdc } = fixture;
-            
-            const MockOUSG = await ethers.getContractFactory("MockOUSG");
-            const ousg = await MockOUSG.deploy();
-            await ousg.waitForDeployment();
-            
-            const MockAdvancedPriceFeed = await ethers.getContractFactory("MockAdvancedPriceFeed");
-            const oracle = await MockAdvancedPriceFeed.deploy();
-            await oracle.waitForDeployment();
-            
-            // Set zero/negative price
-            await oracle.setPrice(0);
-            
-            await router.connect(manager).addYieldAsset(
-                await ousg.getAddress(),
-                await usdc.getAddress(),
-                await oracle.getAddress(),
-                ASSET_TYPE.ONDO_OUSG
-            );
-            
-            await router.connect(manager).updateWeights([10000]);
-            await ousg.mint(await router.getAddress(), ethers.parseUnits("100", 18));
-            
+            // getTotalValue should revert with InvalidOraclePrice
             await expect(router.getTotalValue()).to.be.revertedWithCustomError(router, "InvalidOraclePrice");
         });
 
-        it("Should validate OUSG oracle - incomplete round", async function () {
+        it("Should calculate OUSG value correctly with valid oracle price", async function () {
+            // This test validates that the YieldRouter correctly calculates OUSG value
+            // using the Ondo oracle's getAssetPrice() function
             const fixture = await usdlFixture();
             const { router, manager, usdc } = fixture;
             
+            // Deploy OUSG mock
             const MockOUSG = await ethers.getContractFactory("MockOUSG");
             const ousg = await MockOUSG.deploy();
             await ousg.waitForDeployment();
             
-            const MockAdvancedPriceFeed = await ethers.getContractFactory("MockAdvancedPriceFeed");
-            const oracle = await MockAdvancedPriceFeed.deploy();
+            // Deploy mock Ondo oracle with $1.15 price (scaled by 1e18)
+            const MockOndoOracle = await ethers.getContractFactory("MockOndoOracle");
+            const oracle = await MockOndoOracle.deploy();
             await oracle.waitForDeployment();
+            await oracle.setPrice(ethers.parseUnits("1.15", 18)); // $1.15 per OUSG
             
-            // Set incomplete round (answeredInRound < roundId)
-            await oracle.setIncompleteRound(10, 5);
+            // Deploy mock InstantManager with the oracle
+            const MockOUSGInstantManager = await ethers.getContractFactory("MockOUSGInstantManager");
+            const instantManager = await MockOUSGInstantManager.deploy(
+                await usdc.getAddress(),
+                await ousg.getAddress(),
+                await oracle.getAddress()
+            );
+            await instantManager.waitForDeployment();
             
+            // Add OUSG with InstantManager as manager
             await router.connect(manager).addYieldAsset(
                 await ousg.getAddress(),
                 await usdc.getAddress(),
-                await oracle.getAddress(),
+                await instantManager.getAddress(),
                 ASSET_TYPE.ONDO_OUSG
             );
             
+            // Set weight to activate
             await router.connect(manager).updateWeights([10000]);
-            await ousg.mint(await router.getAddress(), ethers.parseUnits("100", 18));
             
-            await expect(router.getTotalValue()).to.be.revertedWithCustomError(router, "IncompleteOracleRound");
+            // Mint 100 OUSG directly to router
+            const ousgAmount = ethers.parseUnits("100", 18);
+            await ousg.mint(await router.getAddress(), ousgAmount);
+            
+            // getTotalValue should return the OUSG value in USDC terms
+            // 100 OUSG * $1.15 = $115 = 115_000_000 (6 decimals)
+            // Formula: balance * price / 1e30 (since OUSG is 18 decimals, price is 18 decimals, USDC is 6)
+            const totalValue = await router.getTotalValue();
+            expect(totalValue).to.be.gt(0);
+            // Should be approximately 115 USDC (allow for rounding)
+            expect(totalValue).to.be.closeTo(ethers.parseUnits("115", 6), ethers.parseUnits("1", 6));
         });
     });
 
@@ -1146,8 +1158,17 @@ describe("YieldRouter - Coverage Tests", function () {
             const ousg = await MockOUSG.deploy();
             await ousg.waitForDeployment();
             
+            // Deploy mock Ondo oracle (required by InstantManager)
+            const MockOndoOracle = await ethers.getContractFactory("MockOndoOracle");
+            const oracle = await MockOndoOracle.deploy();
+            await oracle.waitForDeployment();
+            
             const MockOUSGInstantManager = await ethers.getContractFactory("MockOUSGInstantManager");
-            const ousgManager = await MockOUSGInstantManager.deploy(await usdc.getAddress(), await ousg.getAddress());
+            const ousgManager = await MockOUSGInstantManager.deploy(
+                await usdc.getAddress(),
+                await ousg.getAddress(),
+                await oracle.getAddress()
+            );
             await ousgManager.waitForDeployment();
             
             // Add second vault for weights
