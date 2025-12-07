@@ -787,34 +787,104 @@ contract MockOUSGManager {
 }
 
 /**
+ * @title MockOndoOracle
+ * @notice Mock Ondo Oracle for testing
+ * @dev Returns price with 18 decimals via getAssetPrice()
+ */
+contract MockOndoOracle {
+    uint256 public price;
+
+    constructor() {
+        price = 1e18; // $1.00 with 18 decimals
+    }
+
+    function setPrice(uint256 _price) external {
+        price = _price;
+    }
+
+    function getAssetPrice(address /* token */) external view returns (uint256) {
+        return price;
+    }
+}
+
+/**
  * @title MockOUSGInstantManager
- * @notice Mock Ondo OUSG instant redemption manager
+ * @notice Mock Ondo OUSG instant subscription/redemption manager
+ * @dev Implements the new subscribe/redeem interface with 3 parameters
  */
 contract MockOUSGInstantManager {
     MockUSDC public usdc;
     MockOUSG public ousg;
+    MockOndoOracle public oracle;
     uint256 public instantRate = 1e18;
 
-    constructor(address _usdc, address _ousg) {
+    constructor(address _usdc, address _ousg, address _oracle) {
         usdc = MockUSDC(_usdc);
         ousg = MockOUSG(_ousg);
+        oracle = MockOndoOracle(_oracle);
     }
 
-    function mint(uint256 usdcAmount) external returns (uint256) {
+    /**
+     * @notice Subscribe to OUSG by depositing USDC
+     * @param depositToken Token to deposit (must be USDC)
+     * @param depositAmount Amount of USDC to deposit
+     * @param minimumRwaReceived Minimum OUSG to receive (not enforced in mock)
+     * @return rwaAmountOut Amount of OUSG minted
+     */
+    function subscribe(
+        address depositToken,
+        uint256 depositAmount,
+        uint256 minimumRwaReceived
+    ) external returns (uint256 rwaAmountOut) {
+        require(depositToken == address(usdc), "Only USDC accepted");
         // Transfer USDC from caller
-        require(usdc.transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
+        require(usdc.transferFrom(msg.sender, address(this), depositAmount), "USDC transfer failed");
         // Mint OUSG (scale 6 decimals to 18)
+        rwaAmountOut = depositAmount * 1e12;
+        require(rwaAmountOut >= minimumRwaReceived, "Slippage exceeded");
+        ousg.mint(msg.sender, rwaAmountOut);
+    }
+
+    /**
+     * @notice Redeem OUSG for USDC
+     * @param rwaAmount Amount of OUSG to redeem
+     * @param receivingToken Token to receive (must be USDC)
+     * @param minimumTokenReceived Minimum tokens to receive (not enforced in mock)
+     * @return receiveTokenAmount Amount of USDC received
+     */
+    function redeem(
+        uint256 rwaAmount,
+        address receivingToken,
+        uint256 minimumTokenReceived
+    ) external returns (uint256 receiveTokenAmount) {
+        require(receivingToken == address(usdc), "Only USDC supported");
+        ousg.burn(msg.sender, rwaAmount);
+        receiveTokenAmount = (rwaAmount * instantRate) / 1e18;
+        receiveTokenAmount = receiveTokenAmount / 1e12; // Scale back to 6 decimals
+        require(receiveTokenAmount >= minimumTokenReceived, "Slippage exceeded");
+        usdc.mint(msg.sender, receiveTokenAmount);
+    }
+
+    /**
+     * @notice Get the Ondo oracle address for price data
+     */
+    function ondoOracle() external view returns (address) {
+        return address(oracle);
+    }
+
+    /**
+     * @notice Get the OUSG token address (rwaToken)
+     */
+    function rwaToken() external view returns (address) {
+        return address(ousg);
+    }
+
+    // Legacy mint/redeem for backward compatibility with existing tests
+    function mint(uint256 usdcAmount) external returns (uint256) {
+        require(usdc.transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
         uint256 ousgAmount = usdcAmount * 1e12;
         ousg.mint(msg.sender, ousgAmount);
         return ousgAmount;
-    }
-
-    function redeem(uint256 ousgAmount) external returns (uint256) {
-        ousg.burn(msg.sender, ousgAmount);
-        uint256 usdcAmount = (ousgAmount * instantRate) / 1e18;
-        usdcAmount = usdcAmount / 1e12;
-        usdc.mint(msg.sender, usdcAmount);
-        return usdcAmount;
     }
 }
 
