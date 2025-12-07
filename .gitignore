@@ -10,6 +10,7 @@ yarn.lock
 
 # Hardhat
 cache/
+ondo/
 archive/
 artifacts/
 typechain-types/
