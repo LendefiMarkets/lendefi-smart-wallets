@@ -114,12 +114,6 @@ interface IYieldRouter {
     /// @notice Thrown when OUSG oracle price is invalid
     error InvalidOraclePrice();
 
-    /// @notice Thrown when oracle data is stale
-    error StaleOraclePrice(uint256 updatedAt, uint256 staleness);
-
-    /// @notice Thrown when oracle round is incomplete
-    error IncompleteOracleRound(uint80 roundId, uint80 answeredInRound);
-
     /// @notice Thrown when automation interval is too short
     error AutomationIntervalTooShort(uint256 providedInterval, uint256 minInterval);
 
