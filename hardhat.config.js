@@ -24,6 +24,12 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 31337,
+      forking: process.env.ETHEREUM_RPC_URL
+        ? {
+            url: process.env.ETHEREUM_RPC_URL,
+            blockNumber: process.env.FORK_BLOCK ? Number(process.env.FORK_BLOCK) : undefined,
+          }
+        : undefined,
     },
     localhost: {
       url: "http://127.0.0.1:8545",
