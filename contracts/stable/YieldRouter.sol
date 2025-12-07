@@ -13,7 +13,7 @@ import {AutomationCompatibleInterface} from "../interfaces/AutomationCompatibleI
 import {
     AssetType,
     IOUSGInstantManager,
-    IRWAOracle,
+    IOndoOracle,
     IAaveV3Pool,
     ILitePSMWrapper
 } from "../interfaces/IYieldProtocols.sol";
@@ -738,8 +738,9 @@ contract YieldRouter is
      */
     function _depositToProtocol(YieldAssetConfig storage config, uint256 amount) internal {
         if (config.assetType == AssetType.ONDO_OUSG) {
+            // Ondo OUSG: subscribe with deposit token, amount, and 0 for minimum (no slippage protection)
             IERC20(config.depositToken).safeIncreaseAllowance(config.manager, amount);
-            IOUSGInstantManager(config.manager).mint(amount);
+            IOUSGInstantManager(config.manager).subscribe(config.depositToken, amount, 0);
         } else if (config.assetType == AssetType.AAVE_V3) {
             IERC20(config.depositToken).safeIncreaseAllowance(config.manager, amount);
             IAaveV3Pool(config.manager).supply(config.depositToken, amount, address(this), 0);
@@ -821,9 +822,9 @@ contract YieldRouter is
         address manager = config.manager;
 
         if (assetType == AssetType.ONDO_OUSG) {
-            // OUSG: Redeem entire balance (has minimum redemption requirements)
+            // OUSG: Redeem entire balance for USDC (has minimum redemption requirements)
             IERC20(token).safeIncreaseAllowance(manager, balance);
-            IOUSGInstantManager(manager).redeem(balance);
+            IOUSGInstantManager(manager).redeem(balance, config.depositToken, 0);
         } else if (assetType == AssetType.AAVE_V3) {
             // Aave V3: Withdraw from pool (aTokens are burned automatically)
             uint256 withdrawAmount = amount > balance ? balance : amount;
@@ -872,29 +873,25 @@ contract YieldRouter is
         if (balance == 0) return 0;
 
         if (config.assetType == AssetType.ONDO_OUSG) {
-            // OUSG: Use RWA oracle for price (Chainlink-compatible, 8 decimals)
-            // config.manager stores the oracle address for OUSG
-            IRWAOracle oracle = IRWAOracle(config.manager);
-            (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) = oracle.latestRoundData();
-
+            // OUSG: Get oracle from InstantManager, then query price
+            // config.manager is the InstantManager, which has ondoOracle() getter
+            IOUSGInstantManager instantManager = IOUSGInstantManager(config.manager);
+            IOndoOracle oracle = IOndoOracle(instantManager.ondoOracle());
+            
+            // Get OUSG token address from InstantManager
+            address ousgToken = instantManager.rwaToken();
+            
+            // Get price (18 decimals)
+            uint256 price = oracle.getAssetPrice(ousgToken);
+            
             // Validate price is positive
-            if (price < 1) revert InvalidOraclePrice();
+            if (price == 0) revert InvalidOraclePrice();
 
-            // Validate oracle data is not stale
-            if (block.timestamp - updatedAt > MAX_ORACLE_STALENESS) {
-                revert StaleOraclePrice(updatedAt, MAX_ORACLE_STALENESS);
-            }
-
-            // Validate round is complete
-            if (answeredInRound < roundId) {
-                revert IncompleteOracleRound(roundId, answeredInRound);
-            }
-
-            // OUSG has 18 decimals, oracle price has 8 decimals (Chainlink standard)
-            // Example: OUSG balance = 100e18, price = 113.47e8 (=$113.47)
-            // value = 100e18 * 113.47e8 / 1e8 / 1e12 = 11347e6 USDC
-            // Formula: balance * price / 1e8 / 1e12 = balance * price / 1e20
-            value = (balance * uint256(price)) / 1e20;
+            // OUSG has 18 decimals, oracle price has 18 decimals
+            // Example: OUSG balance = 100e18, price = 113.47e18 (=$113.47)
+            // value = 100e18 * 113.47e18 / 1e18 / 1e12 = 11347e6 USDC
+            // Formula: balance * price / 1e18 / 1e12 = balance * price / 1e30
+            value = (balance * price) / 1e30;
         } else if (config.assetType == AssetType.AAVE_V3) {
             // aToken is 1:1 with underlying
             value = balance;
