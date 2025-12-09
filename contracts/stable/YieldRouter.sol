@@ -361,13 +361,7 @@ contract YieldRouter is
      *      - If yieldToHarvest > pendingDeposits: Only withdraw the difference
      *      This saves gas by avoiding unnecessary deposit/withdraw pairs
      */
-    function performUpkeep(
-        bytes calldata /* performData */
-    )
-        external
-        override
-        nonReentrant
-    {
+    function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant {
         if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
 
         uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
@@ -592,9 +586,7 @@ contract YieldRouter is
      * @return upkeepNeeded True if upkeep is needed
      * @return performData Encoded pending deposits and yield info
      */
-    function checkUpkeep(
-        bytes calldata /* checkData */
-    )
+    function checkUpkeep(bytes calldata /* checkData */ )
         external
         view
         override
