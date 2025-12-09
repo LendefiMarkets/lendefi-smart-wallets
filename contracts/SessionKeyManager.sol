@@ -34,6 +34,7 @@ abstract contract SessionKeyManager {
     enum SignerType {
         ECDSA, // secp256k1 - Traditional Ethereum keys
         P256 // secp256r1 - Passkeys, WebAuthn, FIDO2, Secure Enclave
+
     }
 
     // ============ Data Structures ============

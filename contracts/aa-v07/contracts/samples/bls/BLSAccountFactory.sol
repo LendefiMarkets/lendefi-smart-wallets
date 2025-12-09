@@ -42,9 +42,11 @@ contract BLSAccountFactory {
             return BLSAccount(payable(addr));
         }
         return BLSAccount(
-            payable(new ERC1967Proxy{salt: bytes32(salt)}(
+            payable(
+                new ERC1967Proxy{salt: bytes32(salt)}(
                     address(accountImplementation), abi.encodeCall(BLSAccount.initialize, aPublicKey)
-                ))
+                )
+            )
         );
     }
 

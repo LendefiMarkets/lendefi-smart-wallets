@@ -817,13 +817,7 @@ contract MockOndoOracle {
         price = _price;
     }
 
-    function getAssetPrice(
-        address /* token */
-    )
-        external
-        view
-        returns (uint256)
-    {
+    function getAssetPrice(address /* token */ ) external view returns (uint256) {
         return price;
     }
 }
