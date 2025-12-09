@@ -52,6 +52,7 @@ contract LendefiPaymaster is BasePaymaster {
     uint256 public maxGasPerMonthPremium = 2_000_000;
     uint256 public maxGasPerMonthUltimate = 10_000_000;
     uint256 public maxGasPerOperation = 500_000;
+    uint256 public maxGasPrice = 100 gwei;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -68,6 +69,7 @@ contract LendefiPaymaster is BasePaymaster {
     error ZeroAddress();
     error InvalidGasLimit();
     error GasLimitTooHigh();
+    error GasPriceTooHigh();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -80,6 +82,7 @@ contract LendefiPaymaster is BasePaymaster {
     event OperatorRemoved(address indexed operator);
     event TierLimitUpdated(SubscriptionTier tier, uint256 oldLimit, uint256 newLimit);
     event MaxGasPerOperationUpdated(uint256 oldLimit, uint256 newLimit);
+    event MaxGasPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event MonthlyGasReset(address indexed user);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -140,6 +143,13 @@ contract LendefiPaymaster is BasePaymaster {
         if (estimatedGas > maxGasPerOperation) revert GasLimitExceeded();
         if (sub.gasUsedThisMonth + estimatedGas > sub.monthlyGasLimit) revert MonthlyLimitExceeded();
 
+        // Validate gas price
+        unchecked {
+            uint256 maxFeePerGas = uint256(userOp.gasFees) & type(uint128).max;
+            uint256 maxPriorityFeePerGas = uint256(userOp.gasFees) >> 128;
+            if (maxFeePerGas > maxGasPrice || maxPriorityFeePerGas > maxGasPrice) revert GasPriceTooHigh();
+        }
+
         // Check deposit
         uint256 subsidy = (maxCost * _getSubsidyPercentage(sub.tier)) / 100;
         if (entryPoint.balanceOf(address(this)) < subsidy) revert PaymasterDepositTooLow();
@@ -157,7 +167,7 @@ contract LendefiPaymaster is BasePaymaster {
      * @dev Post-operation accounting
      */
     function _postOp(
-        PostOpMode mode,
+        PostOpMode /*mode*/,
         bytes calldata context,
         uint256 actualGasCost,
         uint256 /*actualUserOpFeePerGas*/
@@ -165,14 +175,11 @@ contract LendefiPaymaster is BasePaymaster {
         internal
         override
     {
-        (address wallet, uint256 estimatedGas, uint256 gasUsedBefore, SubscriptionTier tier) =
+        (address wallet, uint256 estimatedGas, /*uint256 gasUsedBefore*/, SubscriptionTier tier) =
             abi.decode(context, (address, uint256, uint256, SubscriptionTier));
 
-        if (mode == PostOpMode.postOpReverted) {
-            // Refund pre-deducted gas on revert
-            subscriptions[wallet].gasUsedThisMonth = gasUsedBefore;
-            return;
-        }
+        // Do NOT refund gas on revert to prevent draining attacks
+        // if (mode == PostOpMode.postOpReverted) { ... }
 
         // Gas was already deducted in validation, emit event with actual cost
         uint256 sponsored = (actualGasCost * _getSubsidyPercentage(tier)) / 100;
@@ -280,6 +287,18 @@ contract LendefiPaymaster is BasePaymaster {
         maxGasPerOperation = newLimit;
 
         emit MaxGasPerOperationUpdated(oldLimit, newLimit);
+    }
+
+    /**
+     * @dev Set maximum gas price
+     */
+    function setMaxGasPrice(uint256 newPrice) external onlyOwner {
+        if (newPrice == 0) revert InvalidGasLimit();
+
+        uint256 oldPrice = maxGasPrice;
+        maxGasPrice = newPrice;
+
+        emit MaxGasPriceUpdated(oldPrice, newPrice);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
