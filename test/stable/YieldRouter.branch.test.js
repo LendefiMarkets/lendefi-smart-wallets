@@ -69,7 +69,7 @@ describe("YieldRouter - Branch Coverage", function () {
             
             await expect(
                 router.connect(user1).depositToProtocols(ethers.parseUnits("100", 6))
-            ).to.be.revertedWithCustomError(router, "InsufficientLiquidity");
+            ).to.be.revertedWithCustomError(router, "OnlyVault");
         });
 
         it("Should revert redeemFromProtocols when caller is not vault", async function () {
@@ -77,7 +77,7 @@ describe("YieldRouter - Branch Coverage", function () {
             
             await expect(
                 router.connect(user1).redeemFromProtocols(ethers.parseUnits("100", 6))
-            ).to.be.revertedWithCustomError(router, "InsufficientLiquidity");
+            ).to.be.revertedWithCustomError(router, "OnlyVault");
         });
     });
 
@@ -502,25 +502,7 @@ describe("YieldRouter - Branch Coverage", function () {
         });
     });
 
-    describe("redeemFromSingleYieldAssetExternal", function () {
-        it("Should revert when called by non-self", async function () {
-            const { router, manager, yieldVault, usdc } = await loadFixture(usdlFixture);
-            
-            await router.connect(manager).addYieldAsset(
-                await yieldVault.getAddress(),
-                await usdc.getAddress(),
-                await yieldVault.getAddress(),
-                ASSET_TYPE.ERC4626
-            );
-            
-            await expect(
-                router.connect(manager).redeemFromSingleYieldAssetExternal(
-                    await yieldVault.getAddress(),
-                    ethers.parseUnits("100", 6)
-                )
-            ).to.be.revertedWithCustomError(router, "OnlySelf");
-        });
-    });
+
 
     describe("_authorizeUpgrade", function () {
         it("Should revert upgrade to zero address", async function () {
