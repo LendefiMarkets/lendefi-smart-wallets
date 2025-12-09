@@ -71,6 +71,9 @@ contract YieldRouter is
     /// @notice Precision for rebase index (1e6 for 6 decimal token)
     uint256 public constant REBASE_INDEX_PRECISION = 1e6;
 
+    /// @notice Minimum USDC amount for Ondo OUSG deposits/withdrawals ($5,000)
+    uint256 public constant ONDO_MIN_AMOUNT = 5_000e6;
+
     /// @dev Role for USDL vault to call deposit/redeem
     bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
 
@@ -114,16 +117,20 @@ contract YieldRouter is
     /// @dev Accumulated during deposits, allocated to protocols during performUpkeep
     uint256 public pendingDeposits;
 
+    /// @notice OUSG token address for efficient minimum check
+    address public ousgToken;
+
+    /// @notice Total deposited assets tracked internally
+    uint256 public totalDepositedAssets;
+
     /// @notice Storage gap for upgrades
-    uint256[38] private __gap;
+    uint256[36] private __gap;
 
     // ============ Modifiers ============
 
     /// @notice Restricts function to VAULT_ROLE only
     modifier onlyVault() {
-        if (!hasRole(VAULT_ROLE, msg.sender)) {
-            revert IYieldRouter.InsufficientLiquidity(0, 0);
-        }
+        _onlyVault();
         _;
     }
 
@@ -179,10 +186,13 @@ contract YieldRouter is
         // Track incoming USDC (internal accounting for inflation attack protection)
         trackedUSDCBalance += amount;
 
+        // Track total deposited assets
+        totalDepositedAssets += amount;
+
         // Track as pending - will be allocated to protocols during performUpkeep
         pendingDeposits += amount;
-
         emit DepositedToProtocols(amount);
+        IERC20(usdc).safeTransferFrom(vault, address(this), amount);
     }
 
     /**
@@ -208,18 +218,10 @@ contract YieldRouter is
         // Update tracked balance and transfer
         if (redeemed > 0) {
             trackedUSDCBalance = tracked - redeemed;
+            totalDepositedAssets -= redeemed;
+            emit RedeemedFromProtocols(amount, redeemed);
             IERC20(usdc).safeTransfer(vault, redeemed);
         }
-
-        emit RedeemedFromProtocols(amount, redeemed);
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getTotalValue() external view override returns (uint256 value) {
-        // Reuse internal function to avoid code duplication
-        value = _calculateTrackedValue();
     }
 
     // ============ Yield Asset Management ============
@@ -246,6 +248,11 @@ contract YieldRouter is
         _yieldAssetWeights.set(token, 0); // Always starts inactive
         yieldAssetConfigs[token] =
             YieldAssetConfig({manager: manager, depositToken: depositToken, assetType: assetType});
+
+        // Track OUSG token for efficient minimum checks
+        if (assetType == AssetType.ONDO_OUSG) {
+            ousgToken = token;
+        }
 
         emit YieldAssetAdded(token, manager, 0);
     }
@@ -276,20 +283,8 @@ contract YieldRouter is
             if (oldWeight > 0 && newWeight == 0) {
                 uint256 balance = IERC20(token).balanceOf(address(this));
                 if (balance > 0) {
-                    YieldAssetConfig storage config = yieldAssetConfigs[token];
-                    if (config.assetType == AssetType.ONDO_OUSG) {
-                        // Skip drain if below minimum to avoid blocking weight updates
-                        // Manager must manually drain OUSG positions below minimum
-                        try this.redeemFromSingleYieldAssetExternal(token, balance) returns (uint256 redeemed) {
-                            emit YieldAssetDrained(token, redeemed);
-                        } catch {
-                            // Log event but don't revert the weight update
-                            emit YieldAssetDrained(token, 0);
-                        }
-                    } else {
-                        uint256 redeemed = _redeemFromSingleYieldAsset(token, balance);
-                        emit YieldAssetDrained(token, redeemed);
-                    }
+                    uint256 redeemed = _redeemFromSingleYieldAsset(token, balance);
+                    emit YieldAssetDrained(token, redeemed);
                 }
             }
 
@@ -302,17 +297,17 @@ contract YieldRouter is
         if (total != BASIS_POINTS) revert InvalidTotalWeight(total);
     }
 
-    /**
-     * @notice External wrapper for _redeemFromSingleYieldAsset to allow try/catch
-     * @dev Only callable by this contract itself
-     * @param token Yield asset token
-     * @param amount Amount to redeem
-     * @return redeemed Amount of USDC received
-     */
-    function redeemFromSingleYieldAssetExternal(address token, uint256 amount) external returns (uint256 redeemed) {
-        if (msg.sender != address(this)) revert OnlySelf();
-        return _redeemFromSingleYieldAsset(token, amount);
-    }
+    // /**
+    //  * @notice External wrapper for _redeemFromSingleYieldAsset to allow try/catch
+    //  * @dev Only callable by this contract itself
+    //  * @param token Yield asset token
+    //  * @param amount Amount to redeem
+    //  * @return redeemed Amount of USDC received
+    //  */
+    // function redeemFromSingleYieldAssetExternal(address token, uint256 amount) external returns (uint256 redeemed) {
+    //     if (msg.sender != address(this)) revert OnlySelf();
+    //     return _redeemFromSingleYieldAsset(token, amount);
+    // }
 
     /**
      * @notice Removes a yield asset from the registry
@@ -331,42 +326,15 @@ contract YieldRouter is
         if (balance != 0) revert FundsRemaining(balance);
 
         _yieldAssetWeights.remove(token);
+        YieldAssetConfig memory config = yieldAssetConfigs[token];
         delete yieldAssetConfigs[token];
 
-        emit YieldAssetRemoved(token);
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getYieldAssetConfig(address token) external view override returns (YieldAssetConfig memory config) {
-        return yieldAssetConfigs[token];
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getYieldAssetWeight(address token) external view override returns (uint256 weight) {
-        if (!_yieldAssetWeights.contains(token)) return 0;
-        return _yieldAssetWeights.get(token);
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getAllYieldAssets() external view override returns (address[] memory tokens, uint256[] memory weights) {
-        tokens = _yieldAssetWeights.keys();
-        weights = new uint256[](tokens.length);
-        for (uint256 i = 0; i < tokens.length; ++i) {
-            weights[i] = _yieldAssetWeights.get(tokens[i]);
+        // Clear OUSG token if this was OUSG
+        if (config.assetType == AssetType.ONDO_OUSG) {
+            ousgToken = address(0);
         }
-    }
 
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getYieldAssetCount() external view override returns (uint256 count) {
-        return _yieldAssetWeights.length();
+        emit YieldAssetRemoved(token);
     }
 
     // ============ Sky Protocol ============
@@ -384,56 +352,7 @@ contract YieldRouter is
         emit SkyConfigUpdated(litePSM, _usds, sUsds);
     }
 
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getSkyConfig() external view override returns (address litePSM, address _usds, address sUsds) {
-        SkyConfig memory config = skyConfig;
-        return (config.litePSM, config.usds, config.sUsds);
-    }
-
     // ============ Chainlink Automation ============
-
-    /**
-     * @notice Check if upkeep is needed (Chainlink Automation)
-     * @dev Triggers when:
-     *      1. Time interval passed AND (pending deposits OR yield to accrue)
-     *      2. No external calls needed - all data is internal
-     * @return upkeepNeeded True if upkeep is needed
-     * @return performData Encoded pending deposits and yield info
-     */
-    function checkUpkeep(bytes calldata /* checkData */ )
-        external
-        view
-        override
-        returns (bool upkeepNeeded, bytes memory performData)
-    {
-        if (yieldAccrualInterval == 0) return (false, "");
-
-        uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
-        if (timeSinceLastAccrual < yieldAccrualInterval) {
-            return (false, "");
-        }
-
-        // Check if there are pending deposits to allocate
-        uint256 pending = pendingDeposits;
-
-        // Calculate actual value using internal accounting (excludes donations)
-        uint256 actualValue = _calculateTrackedValue();
-
-        // Calculate expected value (tracked USDC that should be in protocols)
-        // This is trackedUSDCBalance - pendingDeposits (pending is not yet in protocols)
-        uint256 deployedValue = trackedUSDCBalance - pending;
-
-        // Yield = actualValue - deployedValue (excluding pending)
-        bool hasYield = actualValue > deployedValue + pending;
-        bool hasPending = pending > 0;
-
-        if (hasYield || hasPending) {
-            upkeepNeeded = true;
-            performData = abi.encode(pending, hasYield);
-        }
-    }
 
     /**
      * @notice Perform upkeep (called by Chainlink Automation)
@@ -442,7 +361,13 @@ contract YieldRouter is
      *      - If yieldToHarvest > pendingDeposits: Only withdraw the difference
      *      This saves gas by avoiding unnecessary deposit/withdraw pairs
      */
-    function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant {
+    function performUpkeep(
+        bytes calldata /* performData */
+    )
+        external
+        override
+        nonReentrant
+    {
         if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
 
         uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
@@ -454,10 +379,11 @@ contract YieldRouter is
 
         // Cache values
         uint256 pending = pendingDeposits;
-        IUSDL usdl = IUSDL(vault);
-        uint256 currentDeposited = usdl.totalDepositedAssets();
+        uint256 currentDeposited = totalDepositedAssets;
 
         if (currentDeposited == 0 && pending == 0) return;
+
+        IUSDL usdl = IUSDL(vault);
 
         // Calculate yield: (protocol value) - (what we deployed to protocols)
         // trackedUSDCBalance includes pending deposits (not yet in protocols)
@@ -523,69 +449,6 @@ contract YieldRouter is
     /**
      * @inheritdoc IYieldRouter
      */
-    function accrueYield() external override onlyRole(MANAGER_ROLE) returns (uint256 yieldAccrued) {
-        yieldAccrued = _accrueYield();
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function setYieldAccrualInterval(uint256 interval) external override onlyRole(MANAGER_ROLE) {
-        if (interval != 0 && interval < MIN_AUTOMATION_INTERVAL) {
-            revert AutomationIntervalTooShort(interval, MIN_AUTOMATION_INTERVAL);
-        }
-
-        uint256 oldInterval = yieldAccrualInterval;
-        yieldAccrualInterval = interval;
-
-        emit YieldAccrualIntervalUpdated(oldInterval, interval);
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getLastYieldAccrualTimestamp() external view override returns (uint256 timestamp) {
-        return lastYieldAccrualTimestamp;
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getYieldAccrualInterval() external view override returns (uint256 interval) {
-        return yieldAccrualInterval;
-    }
-
-    // ============ Admin Functions ============
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function setVault(address _vault) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_vault == address(0)) revert ZeroAddress();
-
-        address oldVault = vault;
-
-        // Revoke old vault's role
-        if (oldVault != address(0)) {
-            _revokeRole(VAULT_ROLE, oldVault);
-        }
-
-        vault = _vault;
-        _grantRole(VAULT_ROLE, _vault);
-
-        emit VaultUpdated(oldVault, _vault);
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
-    function getVault() external view override returns (address) {
-        return vault;
-    }
-
-    /**
-     * @inheritdoc IYieldRouter
-     */
     function emergencyWithdraw() external override onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         // Cache storage reads
         address _usdc = usdc;
@@ -632,32 +495,162 @@ contract YieldRouter is
         }
     }
 
-    // ============ Internal Functions ============
-
     /**
-     * @notice Calculate actual value using internal accounting (excludes donations)
-     * @return total Total value excluding donated USDC
+     * @inheritdoc IYieldRouter
      */
-    function _calculateTrackedValue() internal view returns (uint256 total) {
-        // Cache storage reads
-        address[] memory tokens = _yieldAssetWeights.keys();
-        uint256 length = tokens.length;
+    function setVault(address _vault) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_vault == address(0)) revert ZeroAddress();
 
-        // Cache weights to avoid repeated .get() calls
-        for (uint256 i = 0; i < length; ++i) {
-            address token = tokens[i];
-            // Only check weight > 0, don't need to cache since single read per token
-            if (_yieldAssetWeights.get(token) > 0) {
-                total += _getProtocolValue(token, yieldAssetConfigs[token]);
-            }
+        address oldVault = vault;
+
+        // Revoke old vault's role
+        if (oldVault != address(0)) {
+            _revokeRole(VAULT_ROLE, oldVault);
         }
 
-        // Add only tracked USDC (excludes donations)
-        // trackedUSDCBalance only increases through:
-        // 1. depositToProtocols (when USDC comes from USDL)
-        // 2. _redeemFromYieldAssets (when we redeem from protocols)
-        total += trackedUSDCBalance;
+        vault = _vault;
+        _grantRole(VAULT_ROLE, _vault);
+
+        emit VaultUpdated(oldVault, _vault);
     }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function accrueYield() external override onlyRole(MANAGER_ROLE) returns (uint256 yieldAccrued) {
+        yieldAccrued = _accrueYield();
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function setYieldAccrualInterval(uint256 interval) external override onlyRole(MANAGER_ROLE) {
+        if (interval != 0 && interval < MIN_AUTOMATION_INTERVAL) {
+            revert AutomationIntervalTooShort(interval, MIN_AUTOMATION_INTERVAL);
+        }
+
+        uint256 oldInterval = yieldAccrualInterval;
+        yieldAccrualInterval = interval;
+
+        emit YieldAccrualIntervalUpdated(oldInterval, interval);
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getTotalValue() external view override returns (uint256 value) {
+        // Reuse internal function to avoid code duplication
+        value = _calculateTrackedValue();
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getYieldAssetConfig(address token) external view override returns (YieldAssetConfig memory config) {
+        return yieldAssetConfigs[token];
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getYieldAssetWeight(address token) external view override returns (uint256 weight) {
+        if (!_yieldAssetWeights.contains(token)) return 0;
+        return _yieldAssetWeights.get(token);
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getAllYieldAssets() external view override returns (address[] memory tokens, uint256[] memory weights) {
+        tokens = _yieldAssetWeights.keys();
+        weights = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; ++i) {
+            weights[i] = _yieldAssetWeights.get(tokens[i]);
+        }
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getYieldAssetCount() external view override returns (uint256 count) {
+        return _yieldAssetWeights.length();
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getSkyConfig() external view override returns (address litePSM, address _usds, address sUsds) {
+        SkyConfig memory config = skyConfig;
+        return (config.litePSM, config.usds, config.sUsds);
+    }
+
+    /**
+     * @notice Check if upkeep is needed (Chainlink Automation)
+     * @dev Triggers when:
+     *      1. Time interval passed AND (pending deposits OR yield to accrue)
+     *      2. No external calls needed - all data is internal
+     * @return upkeepNeeded True if upkeep is needed
+     * @return performData Encoded pending deposits and yield info
+     */
+    function checkUpkeep(
+        bytes calldata /* checkData */
+    )
+        external
+        view
+        override
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
+        if (yieldAccrualInterval == 0) return (false, "");
+
+        uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
+        if (timeSinceLastAccrual < yieldAccrualInterval) {
+            return (false, "");
+        }
+
+        // Check if there are pending deposits to allocate
+        uint256 pending = pendingDeposits;
+
+        // Calculate actual value using internal accounting (excludes donations)
+        uint256 actualValue = _calculateTrackedValue();
+
+        // Calculate expected value (tracked USDC that should be in protocols)
+        // This is trackedUSDCBalance - pendingDeposits (pending is not yet in protocols)
+        uint256 deployedValue = trackedUSDCBalance - pending;
+
+        // Yield = actualValue - deployedValue (excluding pending)
+        bool hasYield = actualValue > deployedValue + pending;
+        bool hasPending = pending > 0;
+
+        if (hasYield || hasPending) {
+            upkeepNeeded = true;
+            performData = abi.encode(pending, hasYield);
+        }
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getLastYieldAccrualTimestamp() external view override returns (uint256 timestamp) {
+        return lastYieldAccrualTimestamp;
+    }
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getYieldAccrualInterval() external view override returns (uint256 interval) {
+        return yieldAccrualInterval;
+    }
+
+    // ============ Admin Functions ============
+
+    /**
+     * @inheritdoc IYieldRouter
+     */
+    function getVault() external view override returns (address) {
+        return vault;
+    }
+
+    // ============ Internal Functions ============
 
     /**
      * @notice Allocate USDC to yield assets by weight
@@ -667,42 +660,18 @@ contract YieldRouter is
         uint256 length = _yieldAssetWeights.length();
         if (length == 0) return;
 
-        address[] memory tokens = new address[](length);
-        uint256[] memory weights = new uint256[](length);
-        uint256 lastActiveIndex = type(uint256).max;
+        (address[] memory tokens, uint256[] memory weights, uint256 lastActiveIndex) = _loadAssetWeights(length);
 
-        // Combine loading and finding last active index into one loop
-        for (uint256 i = 0; i < length; ++i) {
-            (tokens[i], weights[i]) = _yieldAssetWeights.at(i);
-            if (weights[i] > 0) {
-                lastActiveIndex = i;
-            }
-        }
-
-        // If no active assets, USDC stays idle in this contract (tracked balance unchanged)
+        // If no active assets, USDC stays idle
         if (lastActiveIndex == type(uint256).max) return;
 
-        uint256 allocated = 0;
+        // Check OUSG minimum requirements
+        if (!_checkOUSGMinimum(amount)) return;
 
-        for (uint256 i = 0; i < length; ++i) {
-            uint256 weight = weights[i];
-            if (weight == 0) continue;
+        // Deposit to protocols
+        uint256 allocated = _performDeposits(tokens, weights, lastActiveIndex, amount);
 
-            uint256 allocation;
-            if (i == lastActiveIndex) {
-                // Last active asset gets remainder
-                allocation = amount - allocated;
-            } else {
-                allocation = (amount * weight) / BASIS_POINTS;
-            }
-
-            if (allocation > 0) {
-                _depositToProtocol(yieldAssetConfigs[tokens[i]], allocation);
-                allocated += allocation;
-            }
-        }
-
-        // Update storage once at the end
+        // Update storage
         if (allocated > 0) {
             trackedUSDCBalance -= allocated;
         }
@@ -715,27 +684,13 @@ contract YieldRouter is
      */
     function _depositToProtocol(YieldAssetConfig storage config, uint256 amount) internal {
         if (config.assetType == AssetType.ONDO_OUSG) {
-            // Ondo OUSG: subscribe with deposit token, amount, and 0 for minimum (no slippage protection)
-            IERC20(config.depositToken).safeIncreaseAllowance(config.manager, amount);
-            IOUSGInstantManager(config.manager).subscribe(config.depositToken, amount, 0);
+            _depositOUSG(config.manager, config.depositToken, amount);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            IERC20(config.depositToken).safeIncreaseAllowance(config.manager, amount);
-            IAaveV3Pool(config.manager).supply(config.depositToken, amount, address(this), 0);
+            _depositAaveV3(config.manager, config.depositToken, amount);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            SkyConfig memory sky = skyConfig;
-
-            // Step 1: USDC -> USDS via LitePSM
-            IERC20(config.depositToken).safeIncreaseAllowance(sky.litePSM, amount);
-            ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
-
-            // Step 2: USDS -> sUSDS via ERC4626 deposit
-            uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
-            IERC20(sky.usds).safeIncreaseAllowance(sky.sUsds, usdsBalance);
-            IERC4626(sky.sUsds).deposit(usdsBalance, address(this));
+            _depositSky(config.depositToken, amount);
         } else {
-            // ERC4626: Standard vault deposit
-            IERC20(config.depositToken).safeIncreaseAllowance(config.manager, amount);
-            IERC4626(config.manager).deposit(amount, address(this));
+            _depositERC4626(config.manager, config.depositToken, amount);
         }
     }
 
@@ -758,6 +713,22 @@ contract YieldRouter is
             weights[i] = _yieldAssetWeights.get(tokens[i]);
         }
 
+        // PRE-CHECK: Verify OUSG redemption meets minimum if OUSG is active
+        // If OUSG redemption would be below minimum, skip entire rebalancing to maintain weight averages
+        address _ousgToken = ousgToken;
+        if (_ousgToken != address(0) && _yieldAssetWeights.contains(_ousgToken)) {
+            uint256 ousgWeight = _yieldAssetWeights.get(_ousgToken);
+            if (ousgWeight > 0) {
+                uint256 ousgRedemption = (amount * ousgWeight) / BASIS_POINTS;
+                if (ousgRedemption > 0 && ousgRedemption < ONDO_MIN_AMOUNT) {
+                    // OUSG redemption below minimum - skip entire rebalancing
+                    // No redemptions occur, tracked balance unchanged
+                    return;
+                }
+            }
+        }
+
+        // All redemptions meet minimums - proceed with withdrawals
         for (uint256 i = 0; i < length && remaining > 0; ++i) {
             uint256 weight = weights[i];
             if (weight == 0) continue;
@@ -766,12 +737,18 @@ contract YieldRouter is
             if (redeemTarget > remaining) redeemTarget = remaining;
 
             if (redeemTarget > 0) {
+                address token = tokens[i];
+                YieldAssetConfig storage config = yieldAssetConfigs[token];
+                address manager = config.manager;
+
                 uint256 usdcBefore = IERC20(_usdc).balanceOf(address(this));
-                _redeemFromSingleYieldAsset(tokens[i], redeemTarget);
+                _redeemSingleAsset(token, redeemTarget, config, manager);
                 uint256 actualRedeemed = IERC20(_usdc).balanceOf(address(this)) - usdcBefore;
                 // Track the redeemed USDC
-                tracked += actualRedeemed;
-                remaining = remaining > actualRedeemed ? remaining - actualRedeemed : 0;
+                if (actualRedeemed > 0) {
+                    tracked += actualRedeemed;
+                    remaining = remaining > actualRedeemed ? remaining - actualRedeemed : 0;
+                }
             }
         }
 
@@ -782,103 +759,225 @@ contract YieldRouter is
     /**
      * @notice Redeem USDC from a single yield asset
      * @param token Yield token address
-     * @param amount Target amount of USDC to redeem
+     * @param amount Target amount of USDC to redeem (or type(uint256).max to redeem all shares)
      * @return redeemed Actual USDC amount redeemed
      */
     function _redeemFromSingleYieldAsset(address token, uint256 amount) internal returns (uint256 redeemed) {
         YieldAssetConfig storage config = yieldAssetConfigs[token];
         uint256 balance = IERC20(token).balanceOf(address(this));
 
-        if (balance <= 0) return 0;
+        if (balance == 0) return 0;
 
         // Cache usdc storage read
         address _usdc = usdc;
         uint256 usdcBefore = IERC20(_usdc).balanceOf(address(this));
 
-        AssetType assetType = config.assetType;
-        address manager = config.manager;
-
-        if (assetType == AssetType.ONDO_OUSG) {
-            // OUSG: Redeem entire balance for USDC (has minimum redemption requirements)
-            IERC20(token).safeIncreaseAllowance(manager, balance);
-            IOUSGInstantManager(manager).redeem(balance, config.depositToken, 0);
-        } else if (assetType == AssetType.AAVE_V3) {
-            // Aave V3: Withdraw from pool (aTokens are burned automatically)
-            uint256 withdrawAmount = amount > balance ? balance : amount;
-            IAaveV3Pool(manager).withdraw(config.depositToken, withdrawAmount, address(this));
-        } else if (assetType == AssetType.SKY_SUSDS) {
-            // Sky Protocol: sUSDS -> USDS (via redeem) -> USDC (via LitePSM buyGem)
-            // Cache skyConfig storage read
-            SkyConfig memory sky = skyConfig;
-            IERC4626 sUsdsVault = IERC4626(sky.sUsds);
-
-            // Step 1: Calculate shares to redeem for target USDC amount
-            uint256 sharesToRedeem = sUsdsVault.convertToShares(amount * 1e12); // Scale 6 to 18 decimals
-            if (sharesToRedeem <= 0) sharesToRedeem = balance;
-            if (sharesToRedeem > balance) sharesToRedeem = balance;
-
-            // Step 2: Redeem sUSDS for USDS
-            sUsdsVault.redeem(sharesToRedeem, address(this), address(this));
-
-            // Step 3: Swap USDS for USDC via LitePSM
-            uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
-            uint256 usdcAmount = usdsBalance / 1e12; // Scale 18 to 6 decimals
-            if (usdcAmount > 0) {
-                IERC20(sky.usds).safeIncreaseAllowance(sky.litePSM, usdsBalance);
-                ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
-            }
+        // If amount is max, redeem all shares; otherwise redeem target amount
+        if (amount == type(uint256).max) {
+            _redeemAllShares(token, balance, config, config.manager);
         } else {
-            // ERC4626: Convert target amount to shares and redeem
-            IERC4626 vaultContract = IERC4626(manager);
-            uint256 sharesToRedeem = vaultContract.convertToShares(amount);
-            if (sharesToRedeem <= 0) sharesToRedeem = balance;
-            if (sharesToRedeem > balance) sharesToRedeem = balance;
-            vaultContract.redeem(sharesToRedeem, address(this), address(this));
+            _redeemSingleAsset(token, amount, config, config.manager);
         }
 
         redeemed = IERC20(_usdc).balanceOf(address(this)) - usdcBefore;
     }
 
     /**
-     * @notice Get value of a specific protocol position
-     * @param token Yield token address
-     * @param config Yield asset configuration
-     * @return value Value in USDC (6 decimals)
+     * @notice Deposit USDC to Ondo OUSG
+     * @param manager InstantManager contract address
+     * @param depositToken Token to deposit (USDC)
+     * @param amount Amount of USDC to deposit
      */
-    function _getProtocolValue(address token, YieldAssetConfig storage config) internal view returns (uint256 value) {
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance <= 0) return 0;
+    function _depositOUSG(address manager, address depositToken, uint256 amount) internal {
+        if (amount < ONDO_MIN_AMOUNT) return;
+        IERC20(depositToken).forceApprove(manager, amount);
+        IOUSGInstantManager(manager).subscribe(depositToken, amount, 0);
+    }
 
+    /**
+     * @notice Deposit to Aave V3
+     * @param manager Aave V3 pool address
+     * @param depositToken Token to deposit (USDC)
+     * @param amount Amount to deposit
+     */
+    function _depositAaveV3(address manager, address depositToken, uint256 amount) internal {
+        IERC20(depositToken).forceApprove(manager, amount);
+        IAaveV3Pool(manager).supply(depositToken, amount, address(this), 0);
+    }
+
+    /**
+     * @notice Deposit to Sky sUSDS
+     * @param depositToken Token to deposit (USDC)
+     * @param amount Amount to deposit
+     */
+    function _depositSky(address depositToken, uint256 amount) internal {
+        SkyConfig memory sky = skyConfig;
+        // Step 1: USDC -> USDS via LitePSM
+        IERC20(depositToken).forceApprove(sky.litePSM, amount);
+        ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
+        // Step 2: USDS -> sUSDS via ERC4626 deposit
+        uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
+        IERC20(sky.usds).forceApprove(sky.sUsds, usdsBalance);
+        IERC4626(sky.sUsds).deposit(usdsBalance, address(this));
+    }
+
+    /**
+     * @notice Deposit to ERC4626 vault
+     * @param manager Vault address
+     * @param depositToken Token to deposit
+     * @param amount Amount to deposit
+     */
+    function _depositERC4626(address manager, address depositToken, uint256 amount) internal {
+        IERC20(depositToken).forceApprove(manager, amount);
+        IERC4626(manager).deposit(amount, address(this));
+    }
+
+    /**
+     * @notice Redeem from a single asset (used in loops)
+     * @param token Yield token address
+     * @param redeemTarget Target amount to redeem
+     * @param config Asset configuration
+     * @param manager Manager contract address
+     */
+    function _redeemSingleAsset(address token, uint256 redeemTarget, YieldAssetConfig storage config, address manager)
+        internal
+    {
         if (config.assetType == AssetType.ONDO_OUSG) {
-            // OUSG: Get oracle from InstantManager, then query price
-            // config.manager is the InstantManager, which has ondoOracle() getter
-            IOUSGInstantManager instantManager = IOUSGInstantManager(config.manager);
-            IOndoOracle oracle = IOndoOracle(instantManager.ondoOracle());
-
-            // Get OUSG token address from InstantManager
-            address ousgToken = instantManager.rwaToken();
-
-            // Get price (18 decimals)
-            uint256 price = oracle.getAssetPrice(ousgToken);
-
-            // Validate price is positive
-            if (price == 0) revert InvalidOraclePrice();
-
-            // OUSG has 18 decimals, oracle price has 18 decimals
-            // Example: OUSG balance = 100e18, price = 113.47e18 (=$113.47)
-            // value = 100e18 * 113.47e18 / 1e18 / 1e12 = 11347e6 USDC
-            // Formula: balance * price / 1e18 / 1e12 = balance * price / 1e30
-            value = (balance * price) / 1e30;
+            _withdrawOUSG(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            // aToken is 1:1 with underlying
-            value = balance;
+            _withdrawAaveV3(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            // sUSDS: Convert shares to USDS value, then scale to USDC
-            uint256 usdsValue = IERC4626(skyConfig.sUsds).convertToAssets(balance);
-            value = usdsValue / 1e12; // Scale 18 to 6 decimals
+            _withdrawSky(redeemTarget);
         } else {
-            // ERC4626: Convert shares to assets
-            value = IERC4626(config.manager).convertToAssets(balance);
+            _withdrawERC4626(redeemTarget, manager);
+        }
+    }
+
+    /**
+     * @notice Withdraw from Ondo OUSG
+     * @param token OUSG token address
+     * @param usdcTarget Target USDC amount to receive
+     * @param manager InstantManager contract address
+     * @param depositToken Token used to acquire OUSG (USDC)
+     */
+    function _withdrawOUSG(address token, uint256 usdcTarget, address manager, address depositToken) internal {
+        if (usdcTarget < ONDO_MIN_AMOUNT) return;
+
+        // Get OUSG oracle price to convert USDC target to OUSG amount
+        IOUSGInstantManager instantManager = IOUSGInstantManager(manager);
+        IOndoOracle oracle = IOndoOracle(instantManager.ondoOracle());
+        uint256 price = oracle.getAssetPrice(token);
+
+        // Convert USDC (6 decimals) to OUSG tokens (18 decimals)
+        // OUSG value = balance * price / 1e30
+        // So: OUSG balance = USDC value * 1e30 / price
+        uint256 ousgAmount = (usdcTarget * 1e30) / price;
+
+        // Cap at available balance
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (ousgAmount > balance) ousgAmount = balance;
+
+        IERC20(token).forceApprove(manager, ousgAmount);
+        IOUSGInstantManager(manager).redeem(ousgAmount, depositToken, 0);
+    }
+
+    /**
+     * @notice Withdraw from Aave V3
+     * @param token aToken address
+     * @param redeemTarget Target amount to withdraw
+     * @param manager Aave V3 pool address
+     * @param depositToken Underlying token (USDC)
+     */
+    function _withdrawAaveV3(address token, uint256 redeemTarget, address manager, address depositToken) internal {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        uint256 withdrawAmount = redeemTarget > balance ? balance : redeemTarget;
+        if (withdrawAmount > 0) {
+            IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
+        }
+    }
+
+    /**
+     * @notice Withdraw from Sky sUSDS
+     * @param redeemTarget Target amount to withdraw (USDC)
+     */
+    function _withdrawSky(uint256 redeemTarget) internal {
+        SkyConfig memory sky = skyConfig;
+        IERC4626 sUsdsVault = IERC4626(sky.sUsds);
+        uint256 usdsTarget = redeemTarget * 1e12;
+        uint256 maxShares = sUsdsVault.maxRedeem(address(this));
+        if (maxShares > 0) {
+            // Convert target USDS assets to shares needed
+            uint256 sharesToRedeem = sUsdsVault.convertToShares(usdsTarget);
+            // Cap at max available shares
+            if (sharesToRedeem > maxShares) {
+                sharesToRedeem = maxShares;
+            }
+            if (sharesToRedeem > 0) {
+                sUsdsVault.redeem(sharesToRedeem, address(this), address(this));
+            }
+        }
+        // Convert USDS to USDC via LitePSM
+        uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
+        uint256 usdcAmount = usdsBalance / 1e12;
+        if (usdcAmount > 0) {
+            IERC20(sky.usds).forceApprove(sky.litePSM, usdsBalance);
+            ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
+        }
+    }
+
+    /**
+     * @notice Withdraw from ERC4626 vault
+     * @param redeemTarget Target amount to withdraw
+     * @param manager Vault address
+     */
+    function _withdrawERC4626(uint256 redeemTarget, address manager) internal {
+        IERC4626 vaultContract = IERC4626(manager);
+        uint256 maxShares = vaultContract.maxRedeem(address(this));
+        if (maxShares > 0) {
+            // Convert target assets to shares needed
+            uint256 sharesToRedeem = vaultContract.convertToShares(redeemTarget);
+            // Cap at max available shares
+            if (sharesToRedeem > maxShares) {
+                sharesToRedeem = maxShares;
+            }
+            if (sharesToRedeem > 0) {
+                vaultContract.redeem(sharesToRedeem, address(this), address(this));
+            }
+        }
+    }
+
+    /**
+     * @notice Redeem all shares from a single asset (for auto-drain)
+     * @param token Yield token address
+     * @param balance Balance of yield tokens to redeem
+     * @param config Asset configuration
+     * @param manager Manager contract address
+     */
+    function _redeemAllShares(address token, uint256 balance, YieldAssetConfig storage config, address manager)
+        internal
+    {
+        if (config.assetType == AssetType.ONDO_OUSG) {
+            _withdrawOUSG(token, balance, manager, config.depositToken);
+        } else if (config.assetType == AssetType.AAVE_V3) {
+            // Aave aTokens: withdraw all balance
+            IAaveV3Pool(manager).withdraw(config.depositToken, balance, address(this));
+        } else if (config.assetType == AssetType.SKY_SUSDS) {
+            // Sky sUSDS: redeem all shares
+            SkyConfig memory sky = skyConfig;
+            IERC4626 sUsdsVault = IERC4626(sky.sUsds);
+            sUsdsVault.redeem(balance, address(this), address(this));
+            // Convert all USDS to USDC
+            uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
+            if (usdsBalance > 0) {
+                uint256 usdcAmount = usdsBalance / 1e12;
+                if (usdcAmount > 0) {
+                    IERC20(sky.usds).forceApprove(sky.litePSM, usdsBalance);
+                    ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
+                }
+            }
+        } else {
+            // ERC4626: redeem all shares
+            IERC4626(manager).redeem(balance, address(this), address(this));
         }
     }
 
@@ -887,13 +986,14 @@ contract YieldRouter is
      * @return yieldAccrued Amount of yield accrued
      */
     function _accrueYield() internal returns (uint256 yieldAccrued) {
-        // Cache vault storage read
-        IUSDL usdl = IUSDL(vault);
-        uint256 currentDeposited = usdl.totalDepositedAssets();
+        uint256 currentDeposited = totalDepositedAssets;
 
         lastYieldAccrualTimestamp = block.timestamp;
 
         if (currentDeposited == 0) return 0;
+
+        // Cache vault storage read
+        IUSDL usdl = IUSDL(vault);
 
         uint256 currentIndex = usdl.rebaseIndex();
 
@@ -942,5 +1042,155 @@ contract YieldRouter is
         if (newImplementation == address(0)) revert ZeroAddress();
         ++version;
         emit Upgrade(msg.sender, newImplementation);
+    }
+
+    /**
+     * @notice Perform deposits to all active protocols
+     * @param tokens Array of token addresses
+     * @param weights Array of weights
+     * @param lastActiveIndex Index of last active asset
+     * @param amount Total amount to allocate
+     * @return allocated Total amount allocated
+     */
+    function _performDeposits(
+        address[] memory tokens,
+        uint256[] memory weights,
+        uint256 lastActiveIndex,
+        uint256 amount
+    ) internal returns (uint256 allocated) {
+        uint256 length = tokens.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 weight = weights[i];
+            if (weight == 0) continue;
+
+            uint256 allocation;
+            if (i == lastActiveIndex) {
+                allocation = amount - allocated;
+            } else {
+                allocation = (amount * weight) / BASIS_POINTS;
+            }
+
+            if (allocation > 0) {
+                _depositToProtocol(yieldAssetConfigs[tokens[i]], allocation);
+                allocated += allocation;
+            }
+        }
+    }
+
+    /**
+     * @notice Check if OUSG allocation meets minimum requirements
+     * @param amount Amount to allocate
+     * @return valid True if OUSG minimum is met or not applicable
+     */
+    function _checkOUSGMinimum(uint256 amount) internal view returns (bool valid) {
+        address _ousgToken = ousgToken;
+        if (_ousgToken == address(0) || !_yieldAssetWeights.contains(_ousgToken)) {
+            return true;
+        }
+
+        uint256 ousgWeight = _yieldAssetWeights.get(_ousgToken);
+        if (ousgWeight == 0) return true;
+
+        uint256 ousgAllocation = (amount * ousgWeight) / BASIS_POINTS;
+        if (ousgAllocation > 0 && ousgAllocation < ONDO_MIN_AMOUNT) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @notice Get value of a specific protocol position
+     * @param token Yield token address
+     * @param config Yield asset configuration
+     * @return value Value in USDC (6 decimals)
+     */
+    function _getProtocolValue(address token, YieldAssetConfig storage config) internal view returns (uint256 value) {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) return 0;
+
+        if (config.assetType == AssetType.ONDO_OUSG) {
+            // OUSG: Get oracle from InstantManager, then query price
+            // config.manager is the InstantManager, which has ondoOracle() getter
+            IOUSGInstantManager instantManager = IOUSGInstantManager(config.manager);
+            IOndoOracle oracle = IOndoOracle(instantManager.ondoOracle());
+
+            // Get OUSG token address from InstantManager
+            address ousgTokenAddr = instantManager.rwaToken();
+
+            // Get price (18 decimals)
+            uint256 price = oracle.getAssetPrice(ousgTokenAddr);
+
+            // Validate price is positive
+            if (price == 0) revert InvalidOraclePrice();
+
+            // OUSG has 18 decimals, oracle price has 18 decimals
+            // Example: OUSG balance = 100e18, price = 113.47e18 (=$113.47)
+            // value = 100e18 * 113.47e18 / 1e18 / 1e12 = 11347e6 USDC
+            // Formula: balance * price / 1e18 / 1e12 = balance * price / 1e30
+            value = (balance * price) / 1e30;
+        } else if (config.assetType == AssetType.AAVE_V3) {
+            // aToken is 1:1 with underlying
+            value = balance;
+        } else if (config.assetType == AssetType.SKY_SUSDS) {
+            // sUSDS: Convert shares to USDS value, then scale to USDC
+            uint256 usdsValue = IERC4626(skyConfig.sUsds).convertToAssets(balance);
+            value = usdsValue / 1e12; // Scale 18 to 6 decimals
+        } else {
+            // ERC4626: Convert shares to assets
+            value = IERC4626(config.manager).convertToAssets(balance);
+        }
+    }
+
+    /**
+     * @notice Calculate actual value using internal accounting (excludes donations)
+     * @return total Total value excluding donated USDC
+     */
+    function _calculateTrackedValue() internal view returns (uint256 total) {
+        // Cache storage reads
+        address[] memory tokens = _yieldAssetWeights.keys();
+        uint256 length = tokens.length;
+
+        // Cache weights to avoid repeated .get() calls
+        for (uint256 i = 0; i < length; ++i) {
+            address token = tokens[i];
+            // Only check weight > 0, don't need to cache since single read per token
+            if (_yieldAssetWeights.get(token) > 0) {
+                total += _getProtocolValue(token, yieldAssetConfigs[token]);
+            }
+        }
+
+        // Add only tracked USDC (excludes donations)
+        // trackedUSDCBalance only increases through:
+        // 1. depositToProtocols (when USDC comes from USDL)
+        // 2. _redeemFromYieldAssets (when we redeem from protocols)
+        total += trackedUSDCBalance;
+    }
+
+    /**
+     * @notice Load asset weights and find last active index
+     * @param length Number of yield assets
+     * @return tokens Array of token addresses
+     * @return weights Array of weights
+     * @return lastActiveIndex Index of last active asset
+     */
+    function _loadAssetWeights(uint256 length)
+        internal
+        view
+        returns (address[] memory tokens, uint256[] memory weights, uint256 lastActiveIndex)
+    {
+        tokens = new address[](length);
+        weights = new uint256[](length);
+        lastActiveIndex = type(uint256).max;
+
+        for (uint256 i = 0; i < length; ++i) {
+            (tokens[i], weights[i]) = _yieldAssetWeights.at(i);
+            if (weights[i] > 0) {
+                lastActiveIndex = i;
+            }
+        }
+    }
+
+    function _onlyVault() internal view {
+        if (msg.sender != vault) revert OnlyVault(msg.sender);
     }
 }
