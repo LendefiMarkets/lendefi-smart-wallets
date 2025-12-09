@@ -479,16 +479,15 @@ contract USDL is
         // Update internal accounting
         totalDepositedAssets = totalAssets_ + assets;
 
-        // Transfer to router and deposit to protocols
-        IERC20(assetAddress).safeTransfer(address(yieldRouter), assets);
-        yieldRouter.depositToProtocols(assets);
-
         // Mint shares
         _mintShares(receiver, rawShares);
         lastDepositBlock[receiver] = block.number;
         shares = _toRebasedAmount(rawShares, Math.Rounding.Floor);
 
         emit Deposit(msg.sender, receiver, assets, shares);
+        // Transfer to router and deposit to protocols
+        IERC20(assetAddress).forceApprove(address(yieldRouter), assets);
+        yieldRouter.depositToProtocols(assets);
     }
 
     /**
@@ -533,15 +532,14 @@ contract USDL is
         // Update internal accounting
         totalDepositedAssets = totalAssets_ + assets;
 
-        // Transfer to router and deposit to protocols
-        IERC20(assetAddress).safeTransfer(address(yieldRouter), assets);
-        yieldRouter.depositToProtocols(assets);
-
         // Mint shares
         _mintShares(receiver, rawShares);
         lastDepositBlock[receiver] = block.number;
 
         emit Deposit(msg.sender, receiver, assets, shares);
+        // Approve router and deposit to protocols
+        IERC20(assetAddress).forceApprove(address(yieldRouter), assets);
+        yieldRouter.depositToProtocols(assets);
     }
 
     /**
@@ -962,11 +960,7 @@ contract USDL is
         return rebasedAmount.mulDiv(REBASE_INDEX_PRECISION, rebaseIndex, rounding);
     }
 
-    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding)
-        internal
-        view
-        returns (uint256 rebasedAmount)
-    {
+    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding) internal view returns (uint256 rebasedAmount) {
         if (rebaseIndex == 0) return rawShares;
         return rawShares.mulDiv(rebaseIndex, REBASE_INDEX_PRECISION, rounding);
     }
