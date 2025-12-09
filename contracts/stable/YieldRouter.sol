@@ -843,24 +843,24 @@ contract YieldRouter is
         internal
     {
         if (config.assetType == AssetType.ONDO_OUSG) {
-            _withdrawOUSG(token, redeemTarget, manager, config.depositToken);
+            _redeemOUSG(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            _withdrawAaveV3(token, redeemTarget, manager, config.depositToken);
+            _redeemAaveV3(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            _withdrawSky(redeemTarget);
+            _redeemSky(redeemTarget);
         } else {
-            _withdrawERC4626(redeemTarget, manager);
+            _redeemERC4626(redeemTarget, manager);
         }
     }
 
     /**
-     * @notice Withdraw from Ondo OUSG
+     * @notice Redeem OUSG tokens for USDC
      * @param token OUSG token address
      * @param usdcTarget Target USDC amount to receive
      * @param manager InstantManager contract address
      * @param depositToken Token used to acquire OUSG (USDC)
      */
-    function _withdrawOUSG(address token, uint256 usdcTarget, address manager, address depositToken) internal {
+    function _redeemOUSG(address token, uint256 usdcTarget, address manager, address depositToken) internal {
         if (usdcTarget < ONDO_MIN_AMOUNT) return;
 
         // Get OUSG oracle price to convert USDC target to OUSG amount
@@ -882,13 +882,13 @@ contract YieldRouter is
     }
 
     /**
-     * @notice Withdraw from Aave V3
+     * @notice Redeem aTokens from Aave V3 for USDC
      * @param token aToken address
-     * @param redeemTarget Target amount to withdraw
+     * @param redeemTarget Target USDC amount to receive
      * @param manager Aave V3 pool address
      * @param depositToken Underlying token (USDC)
      */
-    function _withdrawAaveV3(address token, uint256 redeemTarget, address manager, address depositToken) internal {
+    function _redeemAaveV3(address token, uint256 redeemTarget, address manager, address depositToken) internal {
         uint256 balance = IERC20(token).balanceOf(address(this));
         uint256 withdrawAmount = redeemTarget > balance ? balance : redeemTarget;
         if (withdrawAmount > 0) {
@@ -897,10 +897,10 @@ contract YieldRouter is
     }
 
     /**
-     * @notice Withdraw from Sky sUSDS
-     * @param redeemTarget Target amount to withdraw (USDC)
+     * @notice Redeem sUSDS shares for USDC
+     * @param redeemTarget Target USDC amount to receive
      */
-    function _withdrawSky(uint256 redeemTarget) internal {
+    function _redeemSky(uint256 redeemTarget) internal {
         SkyConfig memory sky = skyConfig;
         IERC4626 sUsdsVault = IERC4626(sky.sUsds);
         uint256 usdsTarget = redeemTarget * 1e12;
@@ -926,11 +926,11 @@ contract YieldRouter is
     }
 
     /**
-     * @notice Withdraw from ERC4626 vault
-     * @param redeemTarget Target amount to withdraw
+     * @notice Redeem shares from ERC4626 vault for USDC
+     * @param redeemTarget Target USDC amount to receive
      * @param manager Vault address
      */
-    function _withdrawERC4626(uint256 redeemTarget, address manager) internal {
+    function _redeemERC4626(uint256 redeemTarget, address manager) internal {
         IERC4626 vaultContract = IERC4626(manager);
         uint256 maxShares = vaultContract.maxRedeem(address(this));
         if (maxShares > 0) {
@@ -957,9 +957,9 @@ contract YieldRouter is
         internal
     {
         if (config.assetType == AssetType.ONDO_OUSG) {
-            _withdrawOUSG(token, balance, manager, config.depositToken);
+            _redeemOUSG(token, balance, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            // Aave aTokens: withdraw all balance
+            // Aave aTokens: withdraw all balance (aTokens are 1:1 with underlying)
             IAaveV3Pool(manager).withdraw(config.depositToken, balance, address(this));
         } else if (config.assetType == AssetType.SKY_SUSDS) {
             // Sky sUSDS: redeem all shares
