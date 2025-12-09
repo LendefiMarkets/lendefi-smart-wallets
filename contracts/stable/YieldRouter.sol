@@ -3,6 +3,7 @@ pragma solidity 0.8.23;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -47,6 +48,7 @@ contract YieldRouter is
     Initializable,
     AccessControlUpgradeable,
     ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     AutomationCompatibleInterface,
     IYieldRouter
@@ -62,14 +64,8 @@ contract YieldRouter is
     /// @notice Maximum number of yield assets to prevent gas issues
     uint256 public constant MAX_YIELD_ASSETS = 10;
 
-    /// @notice Maximum oracle staleness (1 hour)
-    uint256 public constant MAX_ORACLE_STALENESS = 1 hours;
-
     /// @notice Minimum interval allowed for automated yield accrual (1 hour)
     uint256 public constant MIN_AUTOMATION_INTERVAL = 1 hours;
-
-    /// @notice Precision for rebase index (1e6 for 6 decimal token)
-    uint256 public constant REBASE_INDEX_PRECISION = 1e6;
 
     /// @notice Minimum USDC amount for Ondo OUSG deposits/withdrawals ($5,000)
     uint256 public constant ONDO_MIN_AMOUNT = 5_000e6;
@@ -156,6 +152,7 @@ contract YieldRouter is
 
         __AccessControl_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
         __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _multisig);
@@ -180,7 +177,7 @@ contract YieldRouter is
      *      USDC is tracked as pending and allocated during performUpkeep.
      *      This reduces gas per user deposit by ~50%.
      */
-    function depositToProtocols(uint256 amount) external override nonReentrant onlyVault {
+    function depositToProtocols(uint256 amount) external override nonReentrant whenNotPaused onlyVault {
         if (amount == 0) revert ZeroAmount();
 
         // Track incoming USDC (internal accounting for inflation attack protection)
@@ -198,7 +195,14 @@ contract YieldRouter is
     /**
      * @inheritdoc IYieldRouter
      */
-    function redeemFromProtocols(uint256 amount) external override nonReentrant onlyVault returns (uint256 redeemed) {
+    function redeemFromProtocols(uint256 amount)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        onlyVault
+        returns (uint256 redeemed)
+    {
         if (amount == 0) revert ZeroAmount();
 
         // Cache storage reads
@@ -349,7 +353,7 @@ contract YieldRouter is
      *      - If yieldToHarvest > pendingDeposits: Only withdraw the difference
      *      This saves gas by avoiding unnecessary deposit/withdraw pairs
      */
-    function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant {
+    function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant whenNotPaused {
         if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
 
         uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
@@ -431,7 +435,7 @@ contract YieldRouter is
     /**
      * @inheritdoc IYieldRouter
      */
-    function emergencyWithdraw() external override onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    function emergencyWithdraw() external override onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenPaused {
         // Cache storage reads
         address _usdc = usdc;
         address _vault = vault;
@@ -453,7 +457,24 @@ contract YieldRouter is
         if (usdcBalance > 0) {
             trackedUSDCBalance = 0;
             IERC20(_usdc).safeTransfer(_vault, usdcBalance);
+            emit EmergencyWithdrawal(_vault, usdcBalance);
         }
+    }
+
+    /**
+     * @notice Pauses the contract
+     * @dev Only callable by MANAGER_ROLE
+     */
+    function pause() external onlyRole(MANAGER_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @notice Unpauses the contract
+     * @dev Only callable by MANAGER_ROLE
+     */
+    function unpause() external onlyRole(MANAGER_ROLE) {
+        _unpause();
     }
 
     /**
