@@ -705,7 +705,7 @@ describe("YieldRouter - Coverage Tests", function () {
 
         it("Should withdraw all funds to vault in emergency", async function () {
             const fixture = await loadFixture(setupWithDeposits);
-            const { router, usdl, owner, usdc, yieldVault } = fixture;
+            const { router, usdl, owner, usdc, yieldVault, manager } = fixture;
             
             const usdlAddress = await usdl.getAddress();
             const routerAddress = await router.getAddress();
@@ -715,6 +715,7 @@ describe("YieldRouter - Coverage Tests", function () {
             expect(vaultBalance).to.be.gt(0);
             
             // Emergency withdraw
+            await router.connect(manager).pause();
             await router.connect(owner).emergencyWithdraw();
             
             // Router should have no yield tokens
