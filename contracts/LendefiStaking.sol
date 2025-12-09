@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title LendefiStaking
  * @notice DeFi staking contract for Lendefi token
  * @dev Users stake LDFI tokens to earn gas sponsorship tiers
- * 
+ *
  * Tier Structure:
  * - NONE:     0 tokens staked         → 0% gas subsidy
  * - BASIC:    >= 1,000 LDFI staked    → 50% gas subsidy
@@ -32,11 +32,11 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
     // ============ Structs ============
 
     struct StakeInfo {
-        uint256 amount;           // Total staked amount
-        uint256 stakedAt;         // Timestamp of first stake
-        uint256 lastStakeTime;    // Timestamp of last stake action
+        uint256 amount; // Total staked amount
+        uint256 stakedAt; // Timestamp of first stake
+        uint256 lastStakeTime; // Timestamp of last stake action
         uint256 gasUsedThisMonth; // Gas used in current month
-        uint256 lastResetTime;    // Last monthly reset timestamp
+        uint256 lastResetTime; // Last monthly reset timestamp
     }
 
     // ============ State Variables ============
@@ -48,8 +48,8 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
     uint256 public minStakePeriod = 7 days;
 
     /// @notice Tier thresholds (in token wei, assuming 18 decimals)
-    uint256 public basicThreshold = 1_000 * 1e18;      // 1,000 LDFI
-    uint256 public premiumThreshold = 10_000 * 1e18;   // 10,000 LDFI
+    uint256 public basicThreshold = 1_000 * 1e18; // 1,000 LDFI
+    uint256 public premiumThreshold = 10_000 * 1e18; // 10,000 LDFI
     uint256 public ultimateThreshold = 100_000 * 1e18; // 100,000 LDFI
 
     /// @notice Monthly gas limits per tier
@@ -107,7 +107,7 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
 
         StakeInfo storage info = stakes[msg.sender];
-        
+
         // Transfer tokens from user
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -130,10 +130,10 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      */
     function unstake(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        
+
         StakeInfo storage info = stakes[msg.sender];
         if (info.amount < amount) revert InsufficientStake();
-        
+
         // Check minimum stake period
         if (block.timestamp < info.lastStakeTime + minStakePeriod) {
             revert StakePeriodNotMet();
@@ -157,12 +157,12 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      */
     function recordGasUsage(address user, uint256 gasUsed) external {
         if (!authorizedPaymasters[msg.sender]) revert NotAuthorizedPaymaster();
-        
+
         StakeInfo storage info = stakes[user];
-        
+
         // Reset monthly usage if needed
         _resetMonthlyUsageIfNeeded(user);
-        
+
         info.gasUsedThisMonth += gasUsed;
         emit GasUsageRecorded(user, gasUsed, info.gasUsedThisMonth);
     }
@@ -176,7 +176,7 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      */
     function getTier(address user) public view returns (Tier) {
         uint256 staked = stakes[user].amount;
-        
+
         if (staked >= ultimateThreshold) return Tier.ULTIMATE;
         if (staked >= premiumThreshold) return Tier.PREMIUM;
         if (staked >= basicThreshold) return Tier.BASIC;
@@ -214,22 +214,26 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      * @return hasAllowance True if user has enough gas remaining
      * @return remainingGas Remaining gas this month
      */
-    function checkGasAllowance(address user, uint256 gasNeeded) external view returns (bool hasAllowance, uint256 remainingGas) {
+    function checkGasAllowance(address user, uint256 gasNeeded)
+        external
+        view
+        returns (bool hasAllowance, uint256 remainingGas)
+    {
         StakeInfo storage info = stakes[user];
         Tier tier = getTier(user);
-        
+
         if (tier == Tier.NONE) {
             return (false, 0);
         }
 
         uint256 monthlyLimit = getMonthlyGasLimit(tier);
         uint256 used = info.gasUsedThisMonth;
-        
+
         // Check if monthly reset is due
         if (block.timestamp >= info.lastResetTime + 30 days) {
             used = 0;
         }
-        
+
         remainingGas = monthlyLimit > used ? monthlyLimit - used : 0;
         hasAllowance = remainingGas >= gasNeeded;
     }
@@ -244,17 +248,21 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      * @return gasLimit Monthly gas limit
      * @return canUnstakeAt Timestamp when unstaking is allowed
      */
-    function getUserInfo(address user) external view returns (
-        uint256 staked,
-        Tier tier,
-        uint256 subsidyPercent,
-        uint256 gasUsed,
-        uint256 gasLimit,
-        uint256 canUnstakeAt
-    ) {
+    function getUserInfo(address user)
+        external
+        view
+        returns (
+            uint256 staked,
+            Tier tier,
+            uint256 subsidyPercent,
+            uint256 gasUsed,
+            uint256 gasLimit,
+            uint256 canUnstakeAt
+        )
+    {
         StakeInfo storage info = stakes[user];
         tier = getTier(user);
-        
+
         staked = info.amount;
         subsidyPercent = getSubsidyPercentage(tier);
         gasUsed = info.gasUsedThisMonth;
@@ -270,7 +278,7 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      */
     function getTokensToNextTier(address user) external view returns (uint256 tokensNeeded, Tier nextTier) {
         uint256 staked = stakes[user].amount;
-        
+
         if (staked >= ultimateThreshold) {
             return (0, Tier.ULTIMATE);
         }
@@ -307,16 +315,16 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
     /**
      * @notice Update tier thresholds
      * @param basic Basic tier threshold
-     * @param premium Premium tier threshold  
+     * @param premium Premium tier threshold
      * @param ultimate Ultimate tier threshold
      */
     function setTierThresholds(uint256 basic, uint256 premium, uint256 ultimate) external onlyOwner {
         if (basic >= premium || premium >= ultimate) revert InvalidThresholds();
-        
+
         basicThreshold = basic;
         premiumThreshold = premium;
         ultimateThreshold = ultimate;
-        
+
         emit TierThresholdsUpdated(basic, premium, ultimate);
     }
 
@@ -330,7 +338,7 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
         gasLimitBasic = basic;
         gasLimitPremium = premium;
         gasLimitUltimate = ultimate;
-        
+
         emit GasLimitsUpdated(basic, premium, ultimate);
     }
 
@@ -367,7 +375,7 @@ contract LendefiStaking is Ownable, ReentrancyGuard {
      */
     function _resetMonthlyUsageIfNeeded(address user) internal {
         StakeInfo storage info = stakes[user];
-        
+
         if (block.timestamp >= info.lastResetTime + 30 days) {
             info.gasUsedThisMonth = 0;
             info.lastResetTime = block.timestamp;

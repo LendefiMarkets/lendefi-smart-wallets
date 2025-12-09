@@ -14,10 +14,12 @@
     "verify": "hardhat verify",
     "node": "hardhat node",
     "clean": "hardhat clean",
-    "lint": "solhint 'contracts/**/*.sol'",
-    "lint:fix": "solhint 'contracts/**/*.sol' --fix",
+    "lint": "./node_modules/.bin/solhint -f table contracts/**/*.sol",
+    "lint:fix": "./node_modules/.bin/solhint contracts/**/*.sol --fix",
     "format": "prettier --write 'contracts/**/*.sol'",
-    "typechain": "hardhat typechain"
+    "typechain": "hardhat typechain",
+    "sliver": "slither contracts/stable --solc-remaps \"@openzeppelin/=$(pwd)/node_modules/@openzeppelin/ @uniswap/=$(pwd)/node_modules/@uniswap/\" --solc-args \"--optimize --optimize-runs=20 --via-ir --allow-paths .,$(pwd)/node_modules\" --filter-paths '@openzeppelin,@uniswap'",
+    "sliver:json": "slither contracts/stable --json sliver-report.json --solc-remaps \"@openzeppelin/=$(pwd)/node_modules/@openzeppelin/ @uniswap/=$(pwd)/node_modules/@uniswap/\" --solc-args \"--optimize --optimize-runs=20 --via-ir --allow-paths .,$(pwd)/node_modules\" --filter-paths '@openzeppelin,@uniswap'"
   },
   "keywords": [
     "ethereum",

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { BasePaymaster } from "./aa-v07/contracts/core/BasePaymaster.sol";
-import { IEntryPoint } from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
-import { PackedUserOperation } from "./aa-v07/contracts/interfaces/PackedUserOperation.sol";
+import {BasePaymaster} from "./aa-v07/contracts/core/BasePaymaster.sol";
+import {IEntryPoint} from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
+import {PackedUserOperation} from "./aa-v07/contracts/interfaces/PackedUserOperation.sol";
 
 /**
  * @title LendefiPaymaster
@@ -17,9 +17,10 @@ contract LendefiPaymaster is BasePaymaster {
 
     enum SubscriptionTier {
         NONE,
-        BASIC,      // 50% gas subsidy
-        PREMIUM,    // 90% gas subsidy
-        ULTIMATE    // 100% gas subsidy
+        BASIC, // 50% gas subsidy
+        PREMIUM, // 90% gas subsidy
+        ULTIMATE // 100% gas subsidy
+
     }
 
     struct UserSubscription {
@@ -44,7 +45,7 @@ contract LendefiPaymaster is BasePaymaster {
     // ═══════════════════════════════════════════════════════════════════════════
 
     address public immutable smartWalletFactory;
-    
+
     mapping(address user => UserSubscription subscription) public subscriptions;
     mapping(address operator => bool isAuthorized) public authorizedOperators;
 
@@ -97,10 +98,7 @@ contract LendefiPaymaster is BasePaymaster {
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    constructor(
-        IEntryPoint _entryPoint,
-        address _smartWalletFactory
-    ) BasePaymaster(_entryPoint) {
+    constructor(IEntryPoint _entryPoint, address _smartWalletFactory) BasePaymaster(_entryPoint) {
         if (_smartWalletFactory == address(0)) revert ZeroAddress();
         smartWalletFactory = _smartWalletFactory;
         authorizedOperators[msg.sender] = true;
@@ -113,11 +111,11 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Validate user operation for gas sponsorship
      */
-    function _validatePaymasterUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 /*userOpHash*/,
-        uint256 maxCost
-    ) internal override returns (bytes memory context, uint256 validationData) {
+    function _validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, /*userOpHash*/ uint256 maxCost)
+        internal
+        override
+        returns (bytes memory context, uint256 validationData)
+    {
         // Validate wallet
         address wallet = userOp.sender;
         if (!_isValidWallet(wallet)) revert InvalidWallet();
@@ -154,13 +152,11 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Post-operation accounting
      */
-    function _postOp(
-        PostOpMode mode,
-        bytes calldata context,
-        uint256 actualGasCost,
-        uint256 /*actualUserOpFeePerGas*/
-    ) internal override {
-        (address wallet, uint256 estimatedGas, uint256 gasUsedBefore, SubscriptionTier tier) = 
+    function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 /*actualUserOpFeePerGas*/ )
+        internal
+        override
+    {
+        (address wallet, uint256 estimatedGas, uint256 gasUsedBefore, SubscriptionTier tier) =
             abi.decode(context, (address, uint256, uint256, SubscriptionTier));
 
         if (mode == PostOpMode.postOpReverted) {
@@ -181,11 +177,10 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Grant subscription to user
      */
-    function grantSubscription(
-        address user,
-        SubscriptionTier tier,
-        uint256 durationInSeconds
-    ) external onlyAuthorized {
+    function grantSubscription(address user, SubscriptionTier tier, uint256 durationInSeconds)
+        external
+        onlyAuthorized
+    {
         if (user == address(0)) revert ZeroAddress();
         if (tier == SubscriptionTier.NONE) revert InvalidTier();
 
@@ -305,9 +300,8 @@ contract LendefiPaymaster is BasePaymaster {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function _isValidWallet(address wallet) internal view returns (bool) {
-        (bool success, bytes memory data) = smartWalletFactory.staticcall(
-            abi.encodeWithSignature("isValidWallet(address)", wallet)
-        );
+        (bool success, bytes memory data) =
+            smartWalletFactory.staticcall(abi.encodeWithSignature("isValidWallet(address)", wallet));
         return success && data.length >= 32 && abi.decode(data, (bool));
     }
 

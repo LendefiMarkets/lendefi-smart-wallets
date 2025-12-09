@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
-import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import { IEntryPoint } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import { IAccountFactory } from "./interfaces/IAccountFactory.sol";
-import { SmartWallet } from "./SmartWallet.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {IEntryPoint} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IAccountFactory} from "./interfaces/IAccountFactory.sol";
+import {SmartWallet} from "./SmartWallet.sol";
 
 /**
  * @title SmartWalletFactory
@@ -65,12 +65,12 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
      * @param _owner Owner of the factory contract
      * @param _paymaster Initial paymaster address (optional)
      */
-    function initialize(
-        IEntryPoint _entryPoint, 
-        address _owner, 
-        address _paymaster
-    ) external initializer nonZeroAddress(address(_entryPoint)) nonZeroAddress(_owner) {
-
+    function initialize(IEntryPoint _entryPoint, address _owner, address _paymaster)
+        external
+        initializer
+        nonZeroAddress(address(_entryPoint))
+        nonZeroAddress(_owner)
+    {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
 
@@ -86,11 +86,13 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
      * @param salt Salt for address generation
      * @return account The created account address
      */
-    function createAccount(
-        address accountOwner, 
-        uint256 salt
-    ) external override onlyOwner nonZeroAddress(accountOwner) returns (address account) {
-
+    function createAccount(address accountOwner, uint256 salt)
+        external
+        override
+        onlyOwner
+        nonZeroAddress(accountOwner)
+        returns (address account)
+    {
         // Check if wallet already exists for this owner
         if (userToWallet[accountOwner] != address(0)) revert IAccountFactory.WalletAlreadyExists();
 
@@ -125,7 +127,7 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
      * @param unstakeDelaySec Unstake delay in seconds
      */
     function addStake(uint32 unstakeDelaySec) external payable onlyOwner {
-        entryPoint.addStake{ value: msg.value }(unstakeDelaySec);
+        entryPoint.addStake{value: msg.value}(unstakeDelaySec);
         emit StakeAdded(msg.sender, msg.value, unstakeDelaySec);
     }
 
@@ -142,9 +144,7 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
      * @dev Withdraw stake
      * @param withdrawAddress Address to withdraw stake to
      */
-    function withdrawStake(
-        address payable withdrawAddress
-    ) external onlyOwner nonZeroAddress(withdrawAddress) {
+    function withdrawStake(address payable withdrawAddress) external onlyOwner nonZeroAddress(withdrawAddress) {
         entryPoint.withdrawStake(withdrawAddress);
     }
 
@@ -152,10 +152,11 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
      * @dev Update the SmartWallet implementation contract
      * @param newImplementation Address of the new SmartWallet implementation
      */
-    function setSmartWalletImplementation(
-        address newImplementation
-    ) external onlyOwner nonZeroAddress(newImplementation) {
-
+    function setSmartWalletImplementation(address newImplementation)
+        external
+        onlyOwner
+        nonZeroAddress(newImplementation)
+    {
         // Verify it's a valid SmartWallet implementation by checking it has entryPoint function
         try SmartWallet(payable(newImplementation)).entryPoint() returns (IEntryPoint entryPointAddr) {
             // Valid implementation - verify entryPoint matches
@@ -220,9 +221,12 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
     /**
      * @dev Override required by UUPSUpgradeable - only owner can upgrade
      */
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner nonZeroAddress(newImplementation) {
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        override
+        onlyOwner
+        nonZeroAddress(newImplementation)
+    {
         version++;
     }
 

@@ -18,6 +18,7 @@ enum AssetType {
     AAVE_V3, // Aave V3 lending pool
     ONDO_OUSG, // Ondo OUSG InstantManager (requires whitelist)
     SKY_SUSDS // Sky sUSDS (USDC → USDS via LitePSM → sUSDS via ERC4626)
+
 }
 
 // ============ Aave V3 Interface ============
@@ -101,11 +102,9 @@ interface IOUSGInstantManager {
      * @param minimumRwaReceived Minimum amount of OUSG to receive (slippage protection)
      * @return rwaAmountOut Amount of OUSG received
      */
-    function subscribe(
-        address depositToken,
-        uint256 depositAmount,
-        uint256 minimumRwaReceived
-    ) external returns (uint256 rwaAmountOut);
+    function subscribe(address depositToken, uint256 depositAmount, uint256 minimumRwaReceived)
+        external
+        returns (uint256 rwaAmountOut);
 
     /**
      * @notice Redeem OUSG for a supported token
@@ -114,11 +113,9 @@ interface IOUSGInstantManager {
      * @param minimumTokenReceived Minimum amount of tokens to receive (slippage protection)
      * @return receiveTokenAmount Amount of tokens received
      */
-    function redeem(
-        uint256 rwaAmount,
-        address receivingToken,
-        uint256 minimumTokenReceived
-    ) external returns (uint256 receiveTokenAmount);
+    function redeem(uint256 rwaAmount, address receivingToken, uint256 minimumTokenReceived)
+        external
+        returns (uint256 receiveTokenAmount);
 
     /**
      * @notice Minimum deposit amount in USD (scaled by 1e18)

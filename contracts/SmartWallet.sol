@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { Account } from "@openzeppelin/contracts/account/Account.sol";
-import { SignerECDSA } from "@openzeppelin/contracts/utils/cryptography/signers/SignerECDSA.sol";
-import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import { IEntryPoint, PackedUserOperation } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import { ERC4337Utils } from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { P256 } from "@openzeppelin/contracts/utils/cryptography/P256.sol";
-import { SessionKeyManager } from "./SessionKeyManager.sol";
+import {Account} from "@openzeppelin/contracts/account/Account.sol";
+import {SignerECDSA} from "@openzeppelin/contracts/utils/cryptography/signers/SignerECDSA.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IEntryPoint, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
+import {SessionKeyManager} from "./SessionKeyManager.sol";
 
 /**
  * @title SmartWallet
  * @dev ERC-4337 compliant smart contract wallet with session key support.
  * Supports both ECDSA (secp256k1) and P256 (secp256r1/Passkey) session keys
  * for time-limited, scope-restricted delegated signing capabilities.
- * 
+ *
  * Key features:
  * - ERC-4337 Account Abstraction
  * - Session keys for delegated access (ECDSA + P256/Passkey)
@@ -27,21 +27,21 @@ import { SessionKeyManager } from "./SessionKeyManager.sol";
  */
 contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, ReentrancyGuard, SessionKeyManager {
     // ============ Constants ============
-    
+
     uint256 public constant MAX_BATCH_SIZE = 50;
 
     // ============ State Variables ============
-    
+
     IEntryPoint private immutable _entryPoint;
     address public owner;
 
     // ============ Events ============
-    
+
     event SmartWalletInitialized(IEntryPoint indexed entryPoint, address indexed owner);
     event OwnerChanged(address indexed previousOwner, address indexed newOwner);
 
     // ============ Errors ============
-    
+
     error ZeroAddress();
     error InvalidUserOp();
     error Unauthorized();
@@ -50,7 +50,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
     error BatchTooLarge();
 
     // ============ Modifiers ============
-    
+
     modifier onlyOwner() {
         _onlyOwner();
         _;
@@ -116,18 +116,18 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      * @param values Array of ETH values
      * @param datas Array of call data
      */
-    function executeBatch(
-        address[] calldata targets,
-        uint256[] calldata values,
-        bytes[] calldata datas
-    ) external onlyOwnerOrEntryPoint nonReentrant {
+    function executeBatch(address[] calldata targets, uint256[] calldata values, bytes[] calldata datas)
+        external
+        onlyOwnerOrEntryPoint
+        nonReentrant
+    {
         if (targets.length != values.length || values.length != datas.length) {
             revert InvalidUserOp();
         }
         if (targets.length > MAX_BATCH_SIZE) {
             revert BatchTooLarge();
         }
-        for (uint256 i = 0; i < targets.length; ) {
+        for (uint256 i = 0; i < targets.length;) {
             _call(targets[i], values[i], datas[i]);
             unchecked {
                 ++i;
@@ -141,7 +141,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      * @dev Deposit funds to EntryPoint
      */
     function addDeposit() external payable {
-        entryPoint().depositTo{ value: msg.value }(address(this));
+        entryPoint().depositTo{value: msg.value}(address(this));
     }
 
     /**
@@ -149,10 +149,11 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      * @param withdrawAddress Address to withdraw to
      * @param amount Amount to withdraw
      */
-    function withdrawDepositTo(
-        address payable withdrawAddress,
-        uint256 amount
-    ) external onlyOwner nonZeroAddress(withdrawAddress) {
+    function withdrawDepositTo(address payable withdrawAddress, uint256 amount)
+        external
+        onlyOwner
+        nonZeroAddress(withdrawAddress)
+    {
         entryPoint().withdrawTo(withdrawAddress, amount);
     }
 
@@ -166,7 +167,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
     function changeOwner(address newOwner) external onlyOwner nonZeroAddress(newOwner) {
         if (newOwner == owner) revert SameOwner();
         if (newOwner == address(this)) revert InvalidOwner();
-        
+
         address oldOwner = owner;
         owner = newOwner;
         _setSigner(newOwner);
@@ -181,27 +182,29 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      * @param signature Signature to verify
      * @return magicValue ERC-1271 magic value if valid
      */
-    function isValidSignature(
-        bytes32 hash,
-        bytes calldata signature
-    ) external view override returns (bytes4 magicValue) {
+    function isValidSignature(bytes32 hash, bytes calldata signature)
+        external
+        view
+        override
+        returns (bytes4 magicValue)
+    {
         // Check for session key signature (ECDSA or P256)
         if (signature.length > 4) {
             bytes4 sigType = bytes4(signature[:4]);
-            
+
             if (sigType == SESSION_KEY_ECDSA) {
                 // ECDSA session key: [4 prefix][20 key][65+ sig]
                 if (signature.length < 89) return 0xffffffff;
-                
+
                 address sessionKey = address(bytes20(signature[4:24]));
                 SessionStorage storage ss = _sessionStorage();
                 SessionKeyPacked storage session = ss.ecdsaSessions[sessionKey];
-                
+
                 if (!_isSessionValid(session)) return 0xffffffff;
-                
+
                 // Verify signature using ECDSA
                 bytes calldata sig = signature[24:];
-                (address recovered, , ) = ECDSA.tryRecover(hash, sig);
+                (address recovered,,) = ECDSA.tryRecover(hash, sig);
                 if (recovered == sessionKey) {
                     return 0x1626ba7e; // ERC1271_MAGIC_VALUE
                 }
@@ -209,18 +212,18 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
             } else if (sigType == SESSION_KEY_P256) {
                 // P256 session key: [4 prefix][32 keyX][32 keyY][64 sig (r,s)]
                 if (signature.length < 132) return 0xffffffff;
-                
+
                 bytes32 keyX = bytes32(signature[4:36]);
                 bytes32 keyY = bytes32(signature[36:68]);
                 bytes32 r = bytes32(signature[68:100]);
                 bytes32 s = bytes32(signature[100:132]);
-                
+
                 bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
                 SessionStorage storage ss = _sessionStorage();
                 SessionKeyPacked storage session = ss.p256Sessions[keyHash];
-                
+
                 if (!_isSessionValid(session)) return 0xffffffff;
-                
+
                 // Verify P256 signature
                 if (P256.verify(hash, r, s, keyX, keyY)) {
                     return 0x1626ba7e; // ERC1271_MAGIC_VALUE
@@ -228,7 +231,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
                 return 0xffffffff;
             }
         }
-        
+
         // Default: owner signature
         if (_rawSignatureValidation(hash, signature)) {
             return 0x1626ba7e;
@@ -267,10 +270,12 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
     /**
      * @dev Override _validateUserOp to support session keys
      */
-    function _validateUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 userOpHash
-    ) internal virtual override returns (uint256) {
+    function _validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash)
+        internal
+        virtual
+        override
+        returns (uint256)
+    {
         // Check if this is a session key signature
         if (userOp.signature.length > 4) {
             bytes4 sigType = bytes4(userOp.signature[:4]);
@@ -278,7 +283,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
                 return _validateSessionKeySignature(userOpHash, userOp.signature, userOp.callData);
             }
         }
-        
+
         // Default: owner signature validation
         return _rawSignatureValidation(_signableUserOpHash(userOp, userOpHash), userOp.signature)
             ? ERC4337Utils.SIG_VALIDATION_SUCCESS
@@ -289,7 +294,7 @@ contract SmartWallet is Account, SignerECDSA, IERC1271, Initializable, Reentranc
      * @dev Internal call helper
      */
     function _call(address target, uint256 value, bytes memory data) internal {
-        (bool success, bytes memory result) = target.call{ value: value }(data);
+        (bool success, bytes memory result) = target.call{value: value}(data);
         if (!success) {
             assembly {
                 revert(add(result, 32), mload(result))
