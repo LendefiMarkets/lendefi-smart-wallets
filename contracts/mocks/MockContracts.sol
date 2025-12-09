@@ -206,6 +206,59 @@ contract MockERC4626Vault {
     }
 
     /**
+     * @notice Mint shares
+     */
+    function mint(uint256 shares, address receiver) external returns (uint256 assets) {
+        assets = (shares * yieldMultiplier) / 1e6;
+        require(depositToken.transferFrom(msg.sender, address(this), assets), "Transfer failed");
+        usdcReserve += assets;
+        balanceOf[receiver] += shares;
+        totalSupply += shares;
+
+        emit Deposit(msg.sender, receiver, assets, shares);
+        emit Transfer(address(0), receiver, shares);
+    }
+
+    /**
+     * @notice Withdraw assets
+     */
+    function withdraw(uint256 assets, address receiver, address _owner) external returns (uint256 shares) {
+        shares = (assets * 1e6) / yieldMultiplier;
+        if (msg.sender != _owner) {
+            require(allowance[_owner][msg.sender] >= shares, "Insufficient allowance");
+            allowance[_owner][msg.sender] -= shares;
+        }
+        require(balanceOf[_owner] >= shares, "Insufficient shares");
+
+        balanceOf[_owner] -= shares;
+        totalSupply -= shares;
+
+        if (usdcReserve >= assets) {
+            usdcReserve -= assets;
+            require(depositToken.transfer(receiver, assets), "Transfer failed");
+        } else {
+            depositToken.mint(receiver, assets);
+        }
+
+        emit Withdraw(msg.sender, receiver, _owner, assets, shares);
+        emit Transfer(_owner, address(0), shares);
+    }
+
+    /**
+     * @notice Preview mint
+     */
+    function previewMint(uint256 shares) external view returns (uint256) {
+        return (shares * yieldMultiplier) / 1e6;
+    }
+
+    /**
+     * @notice Preview withdraw
+     */
+    function previewWithdraw(uint256 assets) external view returns (uint256) {
+        return (assets * 1e6) / yieldMultiplier;
+    }
+
+    /**
      * @notice Convert assets to shares (for deposit preview)
      */
     function convertToShares(uint256 assets) external view returns (uint256) {
@@ -291,6 +344,20 @@ contract MockERC4626Vault {
      */
     function maxRedeem(address owner) external view returns (uint256) {
         return balanceOf[owner];
+    }
+
+    /**
+     * @notice Max mint
+     */
+    function maxMint(address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /**
+     * @notice Max withdraw
+     */
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return (balanceOf[owner] * yieldMultiplier) / 1e6;
     }
 
     /**
@@ -585,8 +652,16 @@ contract MockSUsds {
         return type(uint256).max;
     }
 
+    function maxMint(address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
     function maxRedeem(address owner) external view returns (uint256) {
         return balanceOf[owner];
+    }
+
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return (balanceOf[owner] * yieldMultiplier) / 1e18;
     }
 }
 
