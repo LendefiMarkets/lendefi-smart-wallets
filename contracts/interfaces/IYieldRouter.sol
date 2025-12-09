@@ -84,8 +84,9 @@ interface IYieldRouter {
 
     /// @notice Emitted when assets are redeemed from a specific protocol
     /// @param token Yield asset token address
-    /// @param amount Amount redeemed
-    event ProtocolRedeemed(address indexed token, uint256 amount);
+    /// @param requested Amount requested to redeem
+    /// @param received Amount actually received
+    event ProtocolRedeemed(address indexed token, uint256 requested, uint256 received);
 
     /// @notice Emitted when assets are deposited to a specific protocol
     /// @param token Yield asset token address
@@ -95,7 +96,8 @@ interface IYieldRouter {
     /// @notice Emitted when assets are withdrawn from a specific protocol
     /// @param token Yield asset token address
     /// @param amount Amount withdrawn
-    event ProtocolWithdrawn(address indexed token, uint256 amount);
+    /// @param sharesUsed Shares used for withdrawal (if applicable)
+    event ProtocolWithdrawn(address indexed token, uint256 amount, uint256 sharesUsed);
 
     // ============ Errors ============
 
