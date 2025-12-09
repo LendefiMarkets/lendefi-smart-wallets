@@ -691,61 +691,45 @@ contract YieldRouter is
      */
     function _withdrawFromYieldAssets(uint256 amount) internal {
         address[] memory tokens = _yieldAssetWeights.keys();
+        uint256[] memory weights = _cacheWeights(tokens);
+
+        if (!_isOUSGRedemptionValid(amount, tokens, weights)) {
+            return;
+        }
+
+        trackedUSDCBalance = _processWithdrawals(tokens, weights, amount, usdc);
+    }
+
+    function _processWithdrawals(address[] memory tokens, uint256[] memory weights, uint256 amount, address usdcToken)
+        internal
+        returns (uint256 tracked)
+    {
         uint256 length = tokens.length;
         uint256 remaining = amount;
 
-        // Cache storage reads
-        address _usdc = usdc;
-        uint256 tracked = trackedUSDCBalance;
+        tracked = trackedUSDCBalance;
 
-        // Cache weights in memory
-        uint256[] memory weights = new uint256[](length);
-        for (uint256 i = 0; i < length; ++i) {
-            weights[i] = _yieldAssetWeights.get(tokens[i]);
-        }
-
-        // PRE-CHECK: Verify OUSG redemption meets minimum if OUSG is active
-        // If OUSG redemption would be below minimum, skip entire rebalancing to maintain weight averages
-        address _ousgToken = ousgToken;
-        if (_ousgToken != address(0) && _yieldAssetWeights.contains(_ousgToken)) {
-            uint256 ousgWeight = _yieldAssetWeights.get(_ousgToken);
-            if (ousgWeight > 0) {
-                uint256 ousgRedemption = (amount * ousgWeight) / BASIS_POINTS;
-                if (ousgRedemption > 0 && ousgRedemption < ONDO_MIN_AMOUNT) {
-                    // OUSG redemption below minimum - skip entire rebalancing
-                    // No redemptions occur, tracked balance unchanged
-                    return;
-                }
-            }
-        }
-
-        // All redemptions meet minimums - proceed with withdrawals
         for (uint256 i = 0; i < length && remaining > 0; ++i) {
             uint256 weight = weights[i];
             if (weight == 0) continue;
 
             uint256 redeemTarget = (amount * weight) / BASIS_POINTS;
             if (redeemTarget > remaining) redeemTarget = remaining;
+            if (redeemTarget == 0) continue;
 
-            if (redeemTarget > 0) {
-                address token = tokens[i];
-                YieldAssetConfig storage config = yieldAssetConfigs[token];
-                address manager = config.manager;
+            address token = tokens[i];
+            YieldAssetConfig storage config = yieldAssetConfigs[token];
+            address manager = config.manager;
 
-                uint256 usdcBefore = IERC20(_usdc).balanceOf(address(this));
-                _withdrawSingleAsset(token, redeemTarget, config, manager);
+            uint256 usdcBefore = IERC20(usdcToken).balanceOf(address(this));
+            _withdrawSingleAsset(token, redeemTarget, config, manager);
 
-                uint256 actualRedeemed = IERC20(_usdc).balanceOf(address(this)) - usdcBefore;
-                // Track the redeemed USDC
-                if (actualRedeemed > 0) {
-                    tracked += actualRedeemed;
-                    remaining = remaining > actualRedeemed ? remaining - actualRedeemed : 0;
-                }
+            uint256 actualRedeemed = IERC20(usdcToken).balanceOf(address(this)) - usdcBefore;
+            if (actualRedeemed > 0) {
+                tracked += actualRedeemed;
+                remaining = remaining > actualRedeemed ? remaining - actualRedeemed : 0;
             }
         }
-
-        // Write tracked balance once at the end
-        trackedUSDCBalance = tracked;
     }
 
     /**
@@ -1299,6 +1283,42 @@ contract YieldRouter is
         // 1. depositToProtocols (when USDC comes from USDL)
         // 2. _redeemFromYieldAssets (when we redeem from protocols)
         total += trackedUSDCBalance;
+    }
+
+    function _cacheWeights(address[] memory tokens) internal view returns (uint256[] memory weights) {
+        uint256 length = tokens.length;
+        weights = new uint256[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            weights[i] = _yieldAssetWeights.get(tokens[i]);
+        }
+    }
+
+    function _isOUSGRedemptionValid(uint256 amount, address[] memory tokens, uint256[] memory weights)
+        internal
+        view
+        returns (bool)
+    {
+        address _ousgToken = ousgToken;
+        if (_ousgToken == address(0) || !_yieldAssetWeights.contains(_ousgToken)) {
+            return true;
+        }
+
+        uint256 length = tokens.length;
+        for (uint256 i = 0; i < length; ++i) {
+            if (tokens[i] == _ousgToken) {
+                uint256 ousgWeight = weights[i];
+                if (ousgWeight == 0) return true;
+
+                uint256 ousgRedemption = (amount * ousgWeight) / BASIS_POINTS;
+                if (ousgRedemption > 0 && ousgRedemption < ONDO_MIN_AMOUNT) {
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        // OUSG not in tokens array (should not happen) — allow to proceed
+        return true;
     }
 
     /**
