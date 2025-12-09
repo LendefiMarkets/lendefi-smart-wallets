@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { BasePaymaster } from "./aa-v07/contracts/core/BasePaymaster.sol";
-import { IEntryPoint } from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
-import { PackedUserOperation } from "./aa-v07/contracts/interfaces/PackedUserOperation.sol";
-import { LendefiStaking } from "./LendefiStaking.sol";
+import {BasePaymaster} from "./aa-v07/contracts/core/BasePaymaster.sol";
+import {IEntryPoint} from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
+import {PackedUserOperation} from "./aa-v07/contracts/interfaces/PackedUserOperation.sol";
+import {LendefiStaking} from "./LendefiStaking.sol";
 
 /**
  * @title LendefiStakingPaymaster
  * @notice ERC-4337 Paymaster that sponsors gas based on LDF token staking
  * @dev Inherits from audited BasePaymaster for stake/deposit management
- * 
+ *
  * Flow:
  * 1. User stakes LDF tokens in LendefiStaking contract
  * 2. Staking determines user's tier (BASIC/PREMIUM/ULTIMATE)
@@ -51,12 +51,7 @@ contract LendefiStakingPaymaster is BasePaymaster {
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    event GasSponsored(
-        address indexed user,
-        uint256 gasUsed,
-        uint256 subsidyAmount,
-        LendefiStaking.Tier tier
-    );
+    event GasSponsored(address indexed user, uint256 gasUsed, uint256 subsidyAmount, LendefiStaking.Tier tier);
     event MaxGasPerOperationUpdated(uint256 oldLimit, uint256 newLimit);
     event MinDepositUpdated(uint256 oldMin, uint256 newMin);
 
@@ -69,14 +64,12 @@ contract LendefiStakingPaymaster is BasePaymaster {
      * @param _smartWalletFactory Smart wallet factory for validation
      * @param _stakingContract LendefiStaking contract address
      */
-    constructor(
-        IEntryPoint _entryPoint,
-        address _smartWalletFactory,
-        LendefiStaking _stakingContract
-    ) BasePaymaster(_entryPoint) {
+    constructor(IEntryPoint _entryPoint, address _smartWalletFactory, LendefiStaking _stakingContract)
+        BasePaymaster(_entryPoint)
+    {
         if (_smartWalletFactory == address(0)) revert ZeroAddress();
         if (address(_stakingContract) == address(0)) revert ZeroAddress();
-        
+
         smartWalletFactory = _smartWalletFactory;
         stakingContract = _stakingContract;
     }
@@ -88,13 +81,14 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Validate paymaster is willing to sponsor this UserOp
      */
-    function _validatePaymasterUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 /*userOpHash*/,
-        uint256 maxCost
-    ) internal view override returns (bytes memory context, uint256 validationData) {
+    function _validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, /*userOpHash*/ uint256 maxCost)
+        internal
+        view
+        override
+        returns (bytes memory context, uint256 validationData)
+    {
         address user = userOp.sender;
-        
+
         // Validate wallet is from our factory
         if (!_isValidWallet(user)) revert InvalidWallet();
 
@@ -113,7 +107,7 @@ contract LendefiStakingPaymaster is BasePaymaster {
         if (estimatedGas > maxGasPerOperation) revert GasLimitExceeded();
 
         // Check user has enough gas allowance remaining this month
-        (bool hasAllowance, ) = stakingContract.checkGasAllowance(user, estimatedGas);
+        (bool hasAllowance,) = stakingContract.checkGasAllowance(user, estimatedGas);
         if (!hasAllowance) revert MonthlyLimitExceeded();
 
         // Calculate subsidy amount
@@ -128,20 +122,14 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Post-operation handler - records gas usage
      */
-    function _postOp(
-        PostOpMode mode,
-        bytes calldata context,
-        uint256 actualGasCost,
-        uint256 /*actualUserOpFeePerGas*/
-    ) internal override {
+    function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 /*actualUserOpFeePerGas*/ )
+        internal
+        override
+    {
         if (mode == PostOpMode.postOpReverted) return;
 
-        (
-            address user,
-            uint256 estimatedGas,
-            ,
-            LendefiStaking.Tier tier
-        ) = abi.decode(context, (address, uint256, uint256, LendefiStaking.Tier));
+        (address user, uint256 estimatedGas,, LendefiStaking.Tier tier) =
+            abi.decode(context, (address, uint256, uint256, LendefiStaking.Tier));
 
         // Record gas usage in staking contract
         stakingContract.recordGasUsage(user, estimatedGas);
@@ -160,17 +148,18 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Check if a user is eligible for gas sponsorship
      */
-    function checkEligibility(
-        address user,
-        uint256 gasNeeded
-    ) external view returns (bool eligible, LendefiStaking.Tier tier, uint256 subsidyPercent) {
+    function checkEligibility(address user, uint256 gasNeeded)
+        external
+        view
+        returns (bool eligible, LendefiStaking.Tier tier, uint256 subsidyPercent)
+    {
         tier = stakingContract.getTier(user);
-        
+
         if (tier == LendefiStaking.Tier.NONE) {
             return (false, tier, 0);
         }
 
-        (bool hasAllowance, ) = stakingContract.checkGasAllowance(user, gasNeeded);
+        (bool hasAllowance,) = stakingContract.checkGasAllowance(user, gasNeeded);
         subsidyPercent = stakingContract.getSubsidyPercentage(tier);
         eligible = hasAllowance && gasNeeded <= maxGasPerOperation;
     }
@@ -216,9 +205,8 @@ contract LendefiStakingPaymaster is BasePaymaster {
      * @dev Check if wallet is from our factory
      */
     function _isValidWallet(address wallet) internal view returns (bool) {
-        (bool success, bytes memory result) = smartWalletFactory.staticcall(
-            abi.encodeWithSignature("isValidWallet(address)", wallet)
-        );
+        (bool success, bytes memory result) =
+            smartWalletFactory.staticcall(abi.encodeWithSignature("isValidWallet(address)", wallet));
         return success && result.length >= 32 && abi.decode(result, (bool));
     }
 }

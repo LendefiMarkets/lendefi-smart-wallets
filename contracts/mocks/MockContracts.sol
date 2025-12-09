@@ -41,13 +41,7 @@ contract MockPriceFeed {
     function latestRoundData()
         external
         view
-        returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 _updatedAt,
-            uint80 answeredInRound
-        )
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 _updatedAt, uint80 answeredInRound)
     {
         return (1, price, block.timestamp, updatedAt, 1);
     }
@@ -118,11 +112,11 @@ contract MockUSDC {
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
-        
+
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
         }
-        
+
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         emit Transfer(from, to, amount);
@@ -149,7 +143,9 @@ contract MockERC4626Vault {
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
-    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
+    event Withdraw(
+        address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares
+    );
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     constructor(address _depositToken) {
@@ -178,7 +174,7 @@ contract MockERC4626Vault {
         shares = assets; // 1:1 on deposit
         balanceOf[receiver] += shares;
         totalSupply += shares;
-        
+
         emit Deposit(msg.sender, receiver, assets, shares);
         emit Transfer(address(0), receiver, shares);
     }
@@ -192,11 +188,11 @@ contract MockERC4626Vault {
             allowance[_owner][msg.sender] -= shares;
         }
         require(balanceOf[_owner] >= shares, "Insufficient shares");
-        
+
         balanceOf[_owner] -= shares;
         totalSupply -= shares;
         assets = (shares * yieldMultiplier) / 1e6;
-        
+
         if (usdcReserve >= assets) {
             usdcReserve -= assets;
             require(depositToken.transfer(receiver, assets), "Transfer failed");
@@ -204,7 +200,7 @@ contract MockERC4626Vault {
             // Mint extra if needed (shouldn't happen in normal usage)
             depositToken.mint(receiver, assets);
         }
-        
+
         emit Withdraw(msg.sender, receiver, _owner, assets, shares);
         emit Transfer(_owner, address(0), shares);
     }
@@ -352,11 +348,11 @@ contract MockUSDS {
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
-        
+
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
         }
-        
+
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         emit Transfer(from, to, amount);
@@ -387,7 +383,7 @@ contract MockLitePSMWrapper {
     function sellGem(address usr, uint256 gemAmt) external returns (uint256 usdsAmt) {
         // Transfer USDC from sender
         require(usdc.transferFrom(msg.sender, address(this), gemAmt), "USDC transfer failed");
-        
+
         // Mint USDS to recipient (scale 6 decimals to 18 decimals)
         usdsAmt = gemAmt * 1e12;
         usds.mint(usr, usdsAmt);
@@ -402,11 +398,11 @@ contract MockLitePSMWrapper {
     function buyGem(address usr, uint256 gemAmt) external returns (uint256 usdsAmt) {
         // Calculate USDS needed (scale 6 decimals to 18 decimals)
         usdsAmt = gemAmt * 1e12;
-        
+
         // Transfer USDS from sender and burn
         require(usds.transferFrom(msg.sender, address(this), usdsAmt), "USDS transfer failed");
         usds.burn(address(this), usdsAmt);
-        
+
         // Mint USDC to recipient (in real PSM this would be from reserves)
         usdc.mint(usr, gemAmt);
     }
@@ -438,7 +434,9 @@ contract MockSUsds {
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
-    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
+    event Withdraw(
+        address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares
+    );
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     constructor(address _usds) {
@@ -467,7 +465,7 @@ contract MockSUsds {
         shares = assets; // 1:1 on deposit
         balanceOf[receiver] += shares;
         totalSupply += shares;
-        
+
         emit Deposit(msg.sender, receiver, assets, shares);
         emit Transfer(address(0), receiver, shares);
     }
@@ -481,18 +479,18 @@ contract MockSUsds {
             allowance[_owner][msg.sender] -= shares;
         }
         require(balanceOf[_owner] >= shares, "Insufficient shares");
-        
+
         balanceOf[_owner] -= shares;
         totalSupply -= shares;
         assets = (shares * yieldMultiplier) / 1e18;
-        
+
         if (usdsReserve >= assets) {
             usdsReserve -= assets;
             require(usdsToken.transfer(receiver, assets), "Transfer failed");
         } else {
             usdsToken.mint(receiver, assets);
         }
-        
+
         emit Withdraw(msg.sender, receiver, _owner, assets, shares);
         emit Transfer(_owner, address(0), shares);
     }
@@ -507,17 +505,17 @@ contract MockSUsds {
             allowance[_owner][msg.sender] -= shares;
         }
         require(balanceOf[_owner] >= shares, "Insufficient shares");
-        
+
         balanceOf[_owner] -= shares;
         totalSupply -= shares;
-        
+
         if (usdsReserve >= assets) {
             usdsReserve -= assets;
             require(usdsToken.transfer(receiver, assets), "Transfer failed");
         } else {
             usdsToken.mint(receiver, assets);
         }
-        
+
         emit Withdraw(msg.sender, receiver, _owner, assets, shares);
         emit Transfer(_owner, address(0), shares);
     }
@@ -618,10 +616,27 @@ contract MockAavePool {
         return amount;
     }
 
-    function getReserveData(address) external view returns (
-        uint256, uint128, uint128, uint128, uint128, uint128,
-        uint40, uint16, address, address, address, address, uint128, uint128, uint128
-    ) {
+    function getReserveData(address)
+        external
+        view
+        returns (
+            uint256,
+            uint128,
+            uint128,
+            uint128,
+            uint128,
+            uint128,
+            uint40,
+            uint16,
+            address,
+            address,
+            address,
+            address,
+            uint128,
+            uint128,
+            uint128
+        )
+    {
         return (0, 0, 0, 0, 0, 0, 0, 0, aToken, address(0), address(0), address(0), 0, 0, 0);
     }
 }
@@ -802,7 +817,7 @@ contract MockOndoOracle {
         price = _price;
     }
 
-    function getAssetPrice(address /* token */) external view returns (uint256) {
+    function getAssetPrice(address /* token */ ) external view returns (uint256) {
         return price;
     }
 }
@@ -831,11 +846,10 @@ contract MockOUSGInstantManager {
      * @param minimumRwaReceived Minimum OUSG to receive (not enforced in mock)
      * @return rwaAmountOut Amount of OUSG minted
      */
-    function subscribe(
-        address depositToken,
-        uint256 depositAmount,
-        uint256 minimumRwaReceived
-    ) external returns (uint256 rwaAmountOut) {
+    function subscribe(address depositToken, uint256 depositAmount, uint256 minimumRwaReceived)
+        external
+        returns (uint256 rwaAmountOut)
+    {
         require(depositToken == address(usdc), "Only USDC accepted");
         // Transfer USDC from caller
         require(usdc.transferFrom(msg.sender, address(this), depositAmount), "USDC transfer failed");
@@ -852,11 +866,10 @@ contract MockOUSGInstantManager {
      * @param minimumTokenReceived Minimum tokens to receive (not enforced in mock)
      * @return receiveTokenAmount Amount of USDC received
      */
-    function redeem(
-        uint256 rwaAmount,
-        address receivingToken,
-        uint256 minimumTokenReceived
-    ) external returns (uint256 receiveTokenAmount) {
+    function redeem(uint256 rwaAmount, address receivingToken, uint256 minimumTokenReceived)
+        external
+        returns (uint256 receiveTokenAmount)
+    {
         require(receivingToken == address(usdc), "Only USDC supported");
         ousg.burn(msg.sender, rwaAmount);
         receiveTokenAmount = (rwaAmount * instantRate) / 1e18;
@@ -921,18 +934,7 @@ contract MockAdvancedPriceFeed {
         answeredInRound = _answeredInRound;
     }
 
-    function latestRoundData()
-        external
-        view
-        returns (
-            uint80,
-            int256,
-            uint256,
-            uint256,
-            uint80
-        )
-    {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (roundId, price, block.timestamp, updatedAt, answeredInRound);
     }
 }
-

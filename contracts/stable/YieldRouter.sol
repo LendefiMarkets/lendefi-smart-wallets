@@ -159,7 +159,7 @@ contract YieldRouter is
         usdc = _usdc;
         vault = _vault;
         version = 1;
-        
+
         // Default automation settings: daily accruals
         yieldAccrualInterval = 1 days;
         lastYieldAccrualTimestamp = block.timestamp;
@@ -233,12 +233,10 @@ contract YieldRouter is
      * @param manager Manager contract address (vault, pool, oracle)
      * @param assetType Protocol type for deposit/withdraw routing
      */
-    function addYieldAsset(
-        address token,
-        address depositToken,
-        address manager,
-        AssetType assetType
-    ) external onlyRole(MANAGER_ROLE) {
+    function addYieldAsset(address token, address depositToken, address manager, AssetType assetType)
+        external
+        onlyRole(MANAGER_ROLE)
+    {
         if (token == address(0)) revert ZeroAddress();
         if (depositToken == address(0)) revert ZeroAddress();
         if (manager == address(0)) revert ZeroAddress();
@@ -246,11 +244,8 @@ contract YieldRouter is
         if (_yieldAssetWeights.length() > MAX_YIELD_ASSETS - 1) revert MaxYieldAssetsReached(MAX_YIELD_ASSETS);
 
         _yieldAssetWeights.set(token, 0); // Always starts inactive
-        yieldAssetConfigs[token] = YieldAssetConfig({
-            manager: manager,
-            depositToken: depositToken,
-            assetType: assetType
-        });
+        yieldAssetConfigs[token] =
+            YieldAssetConfig({manager: manager, depositToken: depositToken, assetType: assetType});
 
         emit YieldAssetAdded(token, manager, 0);
     }
@@ -422,14 +417,14 @@ contract YieldRouter is
 
         // Check if there are pending deposits to allocate
         uint256 pending = pendingDeposits;
-        
+
         // Calculate actual value using internal accounting (excludes donations)
         uint256 actualValue = _calculateTrackedValue();
-        
+
         // Calculate expected value (tracked USDC that should be in protocols)
         // This is trackedUSDCBalance - pendingDeposits (pending is not yet in protocols)
         uint256 deployedValue = trackedUSDCBalance - pending;
-        
+
         // Yield = actualValue - deployedValue (excluding pending)
         bool hasYield = actualValue > deployedValue + pending;
         bool hasPending = pending > 0;
@@ -469,7 +464,7 @@ contract YieldRouter is
         // So deployed = trackedUSDCBalance - pending
         uint256 actualProtocolValue = _calculateTrackedValue();
         uint256 deployedToProtocols = trackedUSDCBalance - pending;
-        
+
         // Yield = how much more protocols are worth than what we put in
         // Note: actualProtocolValue includes trackedUSDCBalance which has pending
         // So actual yield from protocols = (actualProtocolValue - pending) - deployedToProtocols
@@ -489,7 +484,7 @@ contract YieldRouter is
         // pending = USDC sitting idle that should go to protocols
         // yieldAccrued = value we need to pull from protocols to USDC
         // Instead of: allocate(pending) + harvest(yield), we net them
-        
+
         if (pending > yieldAccrued) {
             // More deposits than yield: only deposit the net amount
             // yieldAccrued worth of USDC stays idle (as harvested yield)
@@ -511,7 +506,7 @@ contract YieldRouter is
         if (yieldAccrued > 0 && currentDeposited > 0) {
             // Recalculate actual value after netting operations
             uint256 newTotalValue = _calculateTrackedValue();
-            
+
             uint256 currentIndex = usdl.rebaseIndex();
             uint256 newIndex = (currentIndex * newTotalValue) / currentDeposited;
 
@@ -623,12 +618,12 @@ contract YieldRouter is
      */
     function rescueDonatedTokens(address to) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (to == address(0)) revert ZeroAddress();
-        
+
         // Cache usdc storage read
         address _usdc = usdc;
         uint256 actualBalance = IERC20(_usdc).balanceOf(address(this));
         uint256 tracked = trackedUSDCBalance;
-        
+
         // Can only rescue excess tokens (donations)
         if (actualBalance > tracked) {
             uint256 excess = actualBalance - tracked;
@@ -656,30 +651,12 @@ contract YieldRouter is
                 total += _getProtocolValue(token, yieldAssetConfigs[token]);
             }
         }
-        
+
         // Add only tracked USDC (excludes donations)
         // trackedUSDCBalance only increases through:
         // 1. depositToProtocols (when USDC comes from USDL)
         // 2. _redeemFromYieldAssets (when we redeem from protocols)
         total += trackedUSDCBalance;
-    }
-
-    /**
-     * @notice Validate that active weights sum to BASIS_POINTS
-     */
-    function _validateWeightSum() internal view {
-        address[] memory tokens = _yieldAssetWeights.keys();
-        uint256 length = tokens.length;
-        uint256 totalWeight = 0;
-
-        for (uint256 i = 0; i < length; ++i) {
-            totalWeight += _yieldAssetWeights.get(tokens[i]);
-        }
-
-        // Allow 0 total weight (no active assets) or exactly BASIS_POINTS
-        if (totalWeight != 0 && totalWeight != BASIS_POINTS) {
-            revert InvalidTotalWeight(totalWeight);
-        }
     }
 
     /**
@@ -812,7 +789,7 @@ contract YieldRouter is
         YieldAssetConfig storage config = yieldAssetConfigs[token];
         uint256 balance = IERC20(token).balanceOf(address(this));
 
-        if (balance == 0) return 0;
+        if (balance <= 0) return 0;
 
         // Cache usdc storage read
         address _usdc = usdc;
@@ -837,7 +814,7 @@ contract YieldRouter is
 
             // Step 1: Calculate shares to redeem for target USDC amount
             uint256 sharesToRedeem = sUsdsVault.convertToShares(amount * 1e12); // Scale 6 to 18 decimals
-            if (sharesToRedeem == 0) sharesToRedeem = balance;
+            if (sharesToRedeem <= 0) sharesToRedeem = balance;
             if (sharesToRedeem > balance) sharesToRedeem = balance;
 
             // Step 2: Redeem sUSDS for USDS
@@ -854,7 +831,7 @@ contract YieldRouter is
             // ERC4626: Convert target amount to shares and redeem
             IERC4626 vaultContract = IERC4626(manager);
             uint256 sharesToRedeem = vaultContract.convertToShares(amount);
-            if (sharesToRedeem == 0) sharesToRedeem = balance;
+            if (sharesToRedeem <= 0) sharesToRedeem = balance;
             if (sharesToRedeem > balance) sharesToRedeem = balance;
             vaultContract.redeem(sharesToRedeem, address(this), address(this));
         }
@@ -870,20 +847,20 @@ contract YieldRouter is
      */
     function _getProtocolValue(address token, YieldAssetConfig storage config) internal view returns (uint256 value) {
         uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance == 0) return 0;
+        if (balance <= 0) return 0;
 
         if (config.assetType == AssetType.ONDO_OUSG) {
             // OUSG: Get oracle from InstantManager, then query price
             // config.manager is the InstantManager, which has ondoOracle() getter
             IOUSGInstantManager instantManager = IOUSGInstantManager(config.manager);
             IOndoOracle oracle = IOndoOracle(instantManager.ondoOracle());
-            
+
             // Get OUSG token address from InstantManager
             address ousgToken = instantManager.rwaToken();
-            
+
             // Get price (18 decimals)
             uint256 price = oracle.getAssetPrice(ousgToken);
-            
+
             // Validate price is positive
             if (price == 0) revert InvalidOraclePrice();
 

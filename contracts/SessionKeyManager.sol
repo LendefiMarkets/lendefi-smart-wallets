@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { P256 } from "@openzeppelin/contracts/utils/cryptography/P256.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
 
 /**
  * @title SessionKeyManager
  * @dev Abstract contract providing session key management for smart wallets.
  * Session keys allow users to grant time-limited, scope-restricted permissions
  * to dApps without exposing their main wallet key.
- * 
+ *
  * Supports two signature types:
  * - ECDSA (secp256k1): Traditional Ethereum signatures
  * - P256 (secp256r1): Passkeys, WebAuthn, Apple/Google device login, FIDO2
- * 
+ *
  * Key features:
  * - Time-bounded validity (validAfter, validUntil)
  * - Target contract restrictions (allowlist)
@@ -32,8 +32,9 @@ abstract contract SessionKeyManager {
      * @dev Type of signer for a session key
      */
     enum SignerType {
-        ECDSA,      // secp256k1 - Traditional Ethereum keys
-        P256        // secp256r1 - Passkeys, WebAuthn, FIDO2, Secure Enclave
+        ECDSA, // secp256k1 - Traditional Ethereum keys
+        P256 // secp256r1 - Passkeys, WebAuthn, FIDO2, Secure Enclave
+
     }
 
     // ============ Data Structures ============
@@ -43,58 +44,53 @@ abstract contract SessionKeyManager {
      */
     struct SessionKeyPacked {
         // For ECDSA keys
-        address ecdsaKey;         // 20 bytes - The ECDSA session key address
-        
+        address ecdsaKey; // 20 bytes - The ECDSA session key address
         // For P256/Passkey keys (public key coordinates)
-        bytes32 p256KeyX;         // 32 bytes - P256 public key X coordinate
-        bytes32 p256KeyY;         // 32 bytes - P256 public key Y coordinate
-        
+        bytes32 p256KeyX; // 32 bytes - P256 public key X coordinate
+        bytes32 p256KeyY; // 32 bytes - P256 public key Y coordinate
         // Timing
-        uint48 validAfter;        // 6 bytes - Timestamp when key becomes valid
-        uint48 validUntil;        // 6 bytes - Timestamp when key expires
-        
+        uint48 validAfter; // 6 bytes - Timestamp when key becomes valid
+        uint48 validUntil; // 6 bytes - Timestamp when key expires
         // Value limits
-        uint128 maxValuePerTx;    // 16 bytes - Max ETH per transaction (0 = no limit)
-        uint128 maxValueTotal;    // 16 bytes - Max total ETH (0 = no limit)
-        
+        uint128 maxValuePerTx; // 16 bytes - Max ETH per transaction (0 = no limit)
+        uint128 maxValueTotal; // 16 bytes - Max total ETH (0 = no limit)
         // Usage tracking
-        uint128 valueUsed;        // 16 bytes - Running total of ETH used
-        uint64 maxCalls;          // 8 bytes - Max number of calls (0 = unlimited)
-        uint64 callsUsed;         // 8 bytes - Running count of calls
-        
+        uint128 valueUsed; // 16 bytes - Running total of ETH used
+        uint64 maxCalls; // 8 bytes - Max number of calls (0 = unlimited)
+        uint64 callsUsed; // 8 bytes - Running count of calls
         // Status
-        SignerType signerType;    // 1 byte - Type of signer
-        bool revoked;             // 1 byte - Manual revocation flag
-        bytes32 permissionsHash;  // 32 bytes - Hash of allowed targets/selectors
+        SignerType signerType; // 1 byte - Type of signer
+        bool revoked; // 1 byte - Manual revocation flag
+        bytes32 permissionsHash; // 32 bytes - Hash of allowed targets/selectors
     }
 
     /**
      * @dev Configuration for creating an ECDSA session key
      */
     struct SessionConfigECDSA {
-        address key;                    // The ECDSA session key address
-        uint48 validAfter;              // Start time (0 = immediate)
-        uint48 validUntil;              // End time
-        uint128 maxValuePerTx;          // Max ETH per tx (0 = no limit)
-        uint128 maxValueTotal;          // Max total ETH (0 = no limit)
-        uint64 maxCalls;                // Max calls (0 = unlimited)
-        address[] allowedTargets;       // Allowed target contracts
-        bytes4[] allowedSelectors;      // Allowed function selectors
+        address key; // The ECDSA session key address
+        uint48 validAfter; // Start time (0 = immediate)
+        uint48 validUntil; // End time
+        uint128 maxValuePerTx; // Max ETH per tx (0 = no limit)
+        uint128 maxValueTotal; // Max total ETH (0 = no limit)
+        uint64 maxCalls; // Max calls (0 = unlimited)
+        address[] allowedTargets; // Allowed target contracts
+        bytes4[] allowedSelectors; // Allowed function selectors
     }
 
     /**
      * @dev Configuration for creating a P256/Passkey session key
      */
     struct SessionConfigP256 {
-        bytes32 keyX;                   // P256 public key X coordinate
-        bytes32 keyY;                   // P256 public key Y coordinate
-        uint48 validAfter;              // Start time (0 = immediate)
-        uint48 validUntil;              // End time
-        uint128 maxValuePerTx;          // Max ETH per tx (0 = no limit)
-        uint128 maxValueTotal;          // Max total ETH (0 = no limit)
-        uint64 maxCalls;                // Max calls (0 = unlimited)
-        address[] allowedTargets;       // Allowed target contracts
-        bytes4[] allowedSelectors;      // Allowed function selectors
+        bytes32 keyX; // P256 public key X coordinate
+        bytes32 keyY; // P256 public key Y coordinate
+        uint48 validAfter; // Start time (0 = immediate)
+        uint48 validUntil; // End time
+        uint128 maxValuePerTx; // Max ETH per tx (0 = no limit)
+        uint128 maxValueTotal; // Max total ETH (0 = no limit)
+        uint64 maxCalls; // Max calls (0 = unlimited)
+        address[] allowedTargets; // Allowed target contracts
+        bytes4[] allowedSelectors; // Allowed function selectors
     }
 
     /**
@@ -108,7 +104,6 @@ abstract contract SessionKeyManager {
         // O(1) lookups for ECDSA sessions
         mapping(address => mapping(address => bool)) ecdsaTargetAllowed;
         mapping(address => mapping(bytes4 => bool)) ecdsaSelectorAllowed;
-        
         // For P256 sessions: keccak256(keyX, keyY) => session
         mapping(bytes32 => SessionKeyPacked) p256Sessions;
         mapping(bytes32 => address[]) p256AllowedTargets;
@@ -122,16 +117,16 @@ abstract contract SessionKeyManager {
 
     /// @dev Signature prefix for ECDSA session keys
     bytes4 public constant SESSION_KEY_ECDSA = 0x00000001;
-    
+
     /// @dev Signature prefix for P256/Passkey session keys
     bytes4 public constant SESSION_KEY_P256 = 0x00000002;
-    
+
     /// @dev Maximum session duration (30 days)
     uint48 public constant MAX_SESSION_DURATION = 30 days;
-    
+
     /// @dev Maximum number of allowed targets per session
     uint256 public constant MAX_TARGETS_PER_SESSION = 10;
-    
+
     /// @dev Maximum number of allowed selectors per session
     uint256 public constant MAX_SELECTORS_PER_SESSION = 20;
 
@@ -139,36 +134,29 @@ abstract contract SessionKeyManager {
 
     /// @dev Storage slot for session data (EIP-7201 style)
     // solhint-disable-next-line private-vars-leading-underscore
-    bytes32 private constant SESSION_STORAGE_SLOT = 
+    bytes32 private constant SESSION_STORAGE_SLOT =
         keccak256(abi.encode(uint256(keccak256("lendefi.session.storage.v2")) - 1)) & ~bytes32(uint256(0xff));
 
     // ============ Events ============
 
     event SessionCreatedECDSA(
-        address indexed sessionKey, 
-        uint48 validAfter,
-        uint48 validUntil, 
-        bytes32 permissionsHash
+        address indexed sessionKey, uint48 validAfter, uint48 validUntil, bytes32 permissionsHash
     );
-    
+
     event SessionCreatedP256(
         bytes32 indexed keyHash,
         bytes32 keyX,
         bytes32 keyY,
         uint48 validAfter,
-        uint48 validUntil, 
+        uint48 validUntil,
         bytes32 permissionsHash
     );
-    
+
     event SessionRevokedECDSA(address indexed sessionKey);
     event SessionRevokedP256(bytes32 indexed keyHash);
-    
+
     event SessionUsed(
-        bytes32 indexed keyIdentifier,
-        SignerType signerType,
-        address indexed target, 
-        bytes4 selector,
-        uint256 value
+        bytes32 indexed keyIdentifier, SignerType signerType, address indexed target, bytes4 selector, uint256 value
     );
 
     // ============ Errors ============
@@ -237,17 +225,21 @@ abstract contract SessionKeyManager {
      * @notice Get ECDSA session key information
      * @param sessionKey The session key address
      */
-    function getSessionECDSA(address sessionKey) external view returns (
-        address key,
-        uint48 validAfter,
-        uint48 validUntil,
-        uint128 maxValuePerTx,
-        uint128 maxValueTotal,
-        uint128 valueUsed,
-        uint64 maxCalls,
-        uint64 callsUsed,
-        bool revoked
-    ) {
+    function getSessionECDSA(address sessionKey)
+        external
+        view
+        returns (
+            address key,
+            uint48 validAfter,
+            uint48 validUntil,
+            uint128 maxValuePerTx,
+            uint128 maxValueTotal,
+            uint128 valueUsed,
+            uint64 maxCalls,
+            uint64 callsUsed,
+            bool revoked
+        )
+    {
         SessionKeyPacked storage session = _sessionStorage().ecdsaSessions[sessionKey];
         return (
             session.ecdsaKey,
@@ -266,10 +258,11 @@ abstract contract SessionKeyManager {
      * @notice Get ECDSA session permissions
      * @param sessionKey The session key address
      */
-    function getSessionPermissionsECDSA(address sessionKey) external view returns (
-        address[] memory allowedTargets,
-        bytes4[] memory allowedSelectors
-    ) {
+    function getSessionPermissionsECDSA(address sessionKey)
+        external
+        view
+        returns (address[] memory allowedTargets, bytes4[] memory allowedSelectors)
+    {
         SessionStorage storage ss = _sessionStorage();
         return (ss.ecdsaAllowedTargets[sessionKey], ss.ecdsaAllowedSelectors[sessionKey]);
     }
@@ -311,18 +304,22 @@ abstract contract SessionKeyManager {
      * @param keyX The P256 public key X coordinate
      * @param keyY The P256 public key Y coordinate
      */
-    function getSessionP256(bytes32 keyX, bytes32 keyY) external view returns (
-        bytes32 storedKeyX,
-        bytes32 storedKeyY,
-        uint48 validAfter,
-        uint48 validUntil,
-        uint128 maxValuePerTx,
-        uint128 maxValueTotal,
-        uint128 valueUsed,
-        uint64 maxCalls,
-        uint64 callsUsed,
-        bool revoked
-    ) {
+    function getSessionP256(bytes32 keyX, bytes32 keyY)
+        external
+        view
+        returns (
+            bytes32 storedKeyX,
+            bytes32 storedKeyY,
+            uint48 validAfter,
+            uint48 validUntil,
+            uint128 maxValuePerTx,
+            uint128 maxValueTotal,
+            uint128 valueUsed,
+            uint64 maxCalls,
+            uint64 callsUsed,
+            bool revoked
+        )
+    {
         bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
         SessionKeyPacked storage session = _sessionStorage().p256Sessions[keyHash];
         return (
@@ -344,10 +341,11 @@ abstract contract SessionKeyManager {
      * @param keyX The P256 public key X coordinate
      * @param keyY The P256 public key Y coordinate
      */
-    function getSessionPermissionsP256(bytes32 keyX, bytes32 keyY) external view returns (
-        address[] memory allowedTargets,
-        bytes4[] memory allowedSelectors
-    ) {
+    function getSessionPermissionsP256(bytes32 keyX, bytes32 keyY)
+        external
+        view
+        returns (address[] memory allowedTargets, bytes4[] memory allowedSelectors)
+    {
         bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
         SessionStorage storage ss = _sessionStorage();
         return (ss.p256AllowedTargets[keyHash], ss.p256AllowedSelectors[keyHash]);
@@ -387,15 +385,13 @@ abstract contract SessionKeyManager {
         _validatePermissions(config.allowedTargets.length, config.allowedSelectors.length);
 
         SessionStorage storage ss = _sessionStorage();
-        
+
         SessionKeyPacked storage existing = ss.ecdsaSessions[config.key];
         if (existing.ecdsaKey != address(0) && _isSessionValid(existing)) {
             revert SessionAlreadyActive();
         }
 
-        bytes32 permissionsHash = keccak256(
-            abi.encode(config.allowedTargets, config.allowedSelectors)
-        );
+        bytes32 permissionsHash = keccak256(abi.encode(config.allowedTargets, config.allowedSelectors));
 
         ss.ecdsaSessions[config.key] = SessionKeyPacked({
             ecdsaKey: config.key,
@@ -417,28 +413,27 @@ abstract contract SessionKeyManager {
         ss.ecdsaAllowedSelectors[config.key] = config.allowedSelectors;
 
         // Populate O(1) lookup mappings and check for self-targeting
-        for (uint256 i = 0; i < config.allowedTargets.length; ) {
+        for (uint256 i = 0; i < config.allowedTargets.length;) {
             if (config.allowedTargets[i] == address(this)) revert CannotTargetSelf();
             ss.ecdsaTargetAllowed[config.key][config.allowedTargets[i]] = true;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
-        for (uint256 i = 0; i < config.allowedSelectors.length; ) {
+        for (uint256 i = 0; i < config.allowedSelectors.length;) {
             ss.ecdsaSelectorAllowed[config.key][config.allowedSelectors[i]] = true;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
-        emit SessionCreatedECDSA(
-            config.key,
-            config.validAfter,
-            config.validUntil,
-            permissionsHash
-        );
+        emit SessionCreatedECDSA(config.key, config.validAfter, config.validUntil, permissionsHash);
     }
 
     function _revokeSessionECDSA(address sessionKey) internal {
         SessionStorage storage ss = _sessionStorage();
         if (ss.ecdsaSessions[sessionKey].ecdsaKey == address(0)) revert SessionNotFound();
-        
+
         ss.ecdsaSessions[sessionKey].revoked = true;
         emit SessionRevokedECDSA(sessionKey);
     }
@@ -453,15 +448,13 @@ abstract contract SessionKeyManager {
 
         bytes32 keyHash = keccak256(abi.encodePacked(config.keyX, config.keyY));
         SessionStorage storage ss = _sessionStorage();
-        
+
         SessionKeyPacked storage existing = ss.p256Sessions[keyHash];
         if (existing.p256KeyX != bytes32(0) && _isSessionValid(existing)) {
             revert SessionAlreadyActive();
         }
 
-        bytes32 permissionsHash = keccak256(
-            abi.encode(config.allowedTargets, config.allowedSelectors)
-        );
+        bytes32 permissionsHash = keccak256(abi.encode(config.allowedTargets, config.allowedSelectors));
 
         ss.p256Sessions[keyHash] = SessionKeyPacked({
             ecdsaKey: address(0),
@@ -483,23 +476,22 @@ abstract contract SessionKeyManager {
         ss.p256AllowedSelectors[keyHash] = config.allowedSelectors;
 
         // Populate O(1) lookup mappings and check for self-targeting
-        for (uint256 i = 0; i < config.allowedTargets.length; ) {
+        for (uint256 i = 0; i < config.allowedTargets.length;) {
             if (config.allowedTargets[i] == address(this)) revert CannotTargetSelf();
             ss.p256TargetAllowed[keyHash][config.allowedTargets[i]] = true;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
-        for (uint256 i = 0; i < config.allowedSelectors.length; ) {
+        for (uint256 i = 0; i < config.allowedSelectors.length;) {
             ss.p256SelectorAllowed[keyHash][config.allowedSelectors[i]] = true;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         emit SessionCreatedP256(
-            keyHash,
-            config.keyX,
-            config.keyY,
-            config.validAfter,
-            config.validUntil,
-            permissionsHash
+            keyHash, config.keyX, config.keyY, config.validAfter, config.validUntil, permissionsHash
         );
     }
 
@@ -507,7 +499,7 @@ abstract contract SessionKeyManager {
         bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
         SessionStorage storage ss = _sessionStorage();
         if (ss.p256Sessions[keyHash].p256KeyX == bytes32(0)) revert SessionNotFound();
-        
+
         ss.p256Sessions[keyHash].revoked = true;
         emit SessionRevokedP256(keyHash);
     }
@@ -536,7 +528,7 @@ abstract contract SessionKeyManager {
         } else {
             if (session.p256KeyX == bytes32(0)) return false;
         }
-        
+
         if (session.revoked) return false;
         // solhint-disable-next-line not-rely-on-time
         if (block.timestamp < session.validAfter) return false;
@@ -549,13 +541,12 @@ abstract contract SessionKeyManager {
      * @dev Validate a session key signature for a UserOperation
      * Supports both ECDSA and P256 signatures based on prefix
      */
-    function _validateSessionKeySignature(
-        bytes32 userOpHash,
-        bytes calldata signature,
-        bytes calldata callData
-    ) internal returns (uint256 validationData) {
+    function _validateSessionKeySignature(bytes32 userOpHash, bytes calldata signature, bytes calldata callData)
+        internal
+        returns (uint256 validationData)
+    {
         bytes4 sigType = bytes4(signature[:4]);
-        
+
         if (sigType == SESSION_KEY_ECDSA) {
             return _validateECDSASessionSignature(userOpHash, signature, callData);
         } else if (sigType == SESSION_KEY_P256) {
@@ -569,29 +560,28 @@ abstract contract SessionKeyManager {
      * @dev Validate ECDSA session key signature
      * Format: [4 bytes prefix][20 bytes session key][65 bytes signature]
      */
-    function _validateECDSASessionSignature(
-        bytes32 userOpHash,
-        bytes calldata signature,
-        bytes calldata callData
-    ) internal returns (uint256) {
+    function _validateECDSASessionSignature(bytes32 userOpHash, bytes calldata signature, bytes calldata callData)
+        internal
+        returns (uint256)
+    {
         if (signature.length < 89) revert InvalidSessionSignature();
-        
+
         address sessionKey = address(bytes20(signature[4:24]));
         bytes calldata sig = signature[24:];
-        
+
         SessionStorage storage ss = _sessionStorage();
         SessionKeyPacked storage session = ss.ecdsaSessions[sessionKey];
-        
+
         if (session.ecdsaKey == address(0)) revert SessionNotFound();
         if (session.revoked) revert SessionKeyRevoked();
-        
+
         // Verify ECDSA signature
         address recovered = userOpHash.recover(sig);
         if (recovered != sessionKey) revert InvalidSessionSignature();
-        
+
         // Check permissions and limits
         _checkPermissionsAndLimitsECDSA(sessionKey, callData, session, ss);
-        
+
         return _getValidationData(session);
     }
 
@@ -599,34 +589,33 @@ abstract contract SessionKeyManager {
      * @dev Validate P256/Passkey session key signature
      * Format: [4 bytes prefix][32 bytes keyX][32 bytes keyY][64 bytes signature (r,s)]
      */
-    function _validateP256SessionSignature(
-        bytes32 userOpHash,
-        bytes calldata signature,
-        bytes calldata callData
-    ) internal returns (uint256) {
+    function _validateP256SessionSignature(bytes32 userOpHash, bytes calldata signature, bytes calldata callData)
+        internal
+        returns (uint256)
+    {
         // Minimum: 4 + 32 + 32 + 64 = 132 bytes
         if (signature.length < 132) revert InvalidSessionSignature();
-        
+
         bytes32 keyX = bytes32(signature[4:36]);
         bytes32 keyY = bytes32(signature[36:68]);
         bytes32 r = bytes32(signature[68:100]);
         bytes32 s = bytes32(signature[100:132]);
-        
+
         bytes32 keyHash = keccak256(abi.encodePacked(keyX, keyY));
         SessionStorage storage ss = _sessionStorage();
         SessionKeyPacked storage session = ss.p256Sessions[keyHash];
-        
+
         if (session.p256KeyX == bytes32(0)) revert SessionNotFound();
         if (session.revoked) revert SessionKeyRevoked();
-        
+
         // Verify P256 signature
         if (!P256.verify(userOpHash, r, s, keyX, keyY)) {
             revert InvalidSessionSignature();
         }
-        
+
         // Check permissions and limits
         _checkPermissionsAndLimitsP256(keyHash, callData, session, ss);
-        
+
         return _getValidationData(session);
     }
 
@@ -650,19 +639,19 @@ abstract contract SessionKeyManager {
     ) internal {
         bytes4 selector = bytes4(callData[:4]);
         _checkSensitiveFunctions(selector);
-        
+
         bytes4 executeSel = 0xb61d27f6;
         if (selector == executeSel) {
             _handleExecuteECDSA(sessionKey, callData, session, ss);
             return;
         }
-        
+
         bytes4 executeBatchSel = 0x47e1da2a;
         if (selector == executeBatchSel) {
             _handleExecuteBatchECDSA(sessionKey, callData, session, ss);
             return;
         }
-        
+
         revert CannotCallSensitiveFunction();
     }
 
@@ -674,19 +663,19 @@ abstract contract SessionKeyManager {
     ) internal {
         bytes4 selector = bytes4(callData[:4]);
         _checkSensitiveFunctions(selector);
-        
+
         bytes4 executeSel = 0xb61d27f6;
         if (selector == executeSel) {
             _handleExecuteP256(keyHash, callData, session, ss);
             return;
         }
-        
+
         bytes4 executeBatchSel = 0x47e1da2a;
         if (selector == executeBatchSel) {
             _handleExecuteBatchP256(keyHash, callData, session, ss);
             return;
         }
-        
+
         revert CannotCallSensitiveFunction();
     }
 
@@ -699,15 +688,12 @@ abstract contract SessionKeyManager {
         bytes4 revokeSessionECDSASel = 0x6e0f2d6a;
         bytes4 revokeSessionP256Sel = 0x5c7b9a2e;
         bytes4 withdrawSel = 0x205c2878;
-        
-        if (selector == changeOwnerSel ||
-            selector == createSessionSel ||
-            selector == createSessionECDSASel ||
-            selector == createSessionP256Sel ||
-            selector == revokeSessionSel ||
-            selector == revokeSessionECDSASel ||
-            selector == revokeSessionP256Sel ||
-            selector == withdrawSel) {
+
+        if (
+            selector == changeOwnerSel || selector == createSessionSel || selector == createSessionECDSASel
+                || selector == createSessionP256Sel || selector == revokeSessionSel || selector == revokeSessionECDSASel
+                || selector == revokeSessionP256Sel || selector == withdrawSel
+        ) {
             revert CannotCallSensitiveFunction();
         }
     }
@@ -720,14 +706,13 @@ abstract contract SessionKeyManager {
         SessionKeyPacked storage session,
         SessionStorage storage ss
     ) internal {
-        (address target, uint256 value, bytes memory data) = 
-            abi.decode(callData[4:], (address, uint256, bytes));
-        
+        (address target, uint256 value, bytes memory data) = abi.decode(callData[4:], (address, uint256, bytes));
+
         bytes4 targetSelector = data.length > 3 ? bytes4(data) : bytes4(0);
-        
+
         _validateCallECDSA(sessionKey, target, targetSelector, value, session, ss);
         _updateLimits(session, value);
-        
+
         emit SessionUsed(bytes32(uint256(uint160(sessionKey))), SignerType.ECDSA, target, targetSelector, value);
     }
 
@@ -739,18 +724,22 @@ abstract contract SessionKeyManager {
     ) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
             abi.decode(callData[4:], (address[], uint256[], bytes[]));
-        
+
         uint256 totalValue = 0;
-        for (uint256 i = 0; i < targets.length; ) {
+        for (uint256 i = 0; i < targets.length;) {
             bytes4 targetSelector = datas[i].length > 3 ? bytes4(datas[i]) : bytes4(0);
-            
+
             _validateCallECDSA(sessionKey, targets[i], targetSelector, values[i], session, ss);
             totalValue += values[i];
-            
-            emit SessionUsed(bytes32(uint256(uint160(sessionKey))), SignerType.ECDSA, targets[i], targetSelector, values[i]);
-            unchecked { ++i; }
+
+            emit SessionUsed(
+                bytes32(uint256(uint160(sessionKey))), SignerType.ECDSA, targets[i], targetSelector, values[i]
+            );
+            unchecked {
+                ++i;
+            }
         }
-        
+
         _updateLimits(session, totalValue);
     }
 
@@ -765,7 +754,7 @@ abstract contract SessionKeyManager {
         if (session.maxValuePerTx > 0 && value > session.maxValuePerTx) {
             revert ValueExceedsPerTxLimit();
         }
-        
+
         _checkTargetAllowedECDSA(sessionKey, target, ss);
         _checkSelectorAllowedECDSA(sessionKey, targetSelector, ss);
     }
@@ -774,10 +763,13 @@ abstract contract SessionKeyManager {
         if (!ss.ecdsaTargetAllowed[sessionKey][target]) revert TargetNotAllowed();
     }
 
-    function _checkSelectorAllowedECDSA(address sessionKey, bytes4 targetSelector, SessionStorage storage ss) internal view {
+    function _checkSelectorAllowedECDSA(address sessionKey, bytes4 targetSelector, SessionStorage storage ss)
+        internal
+        view
+    {
         bytes4[] storage allowedSelectors = ss.ecdsaAllowedSelectors[sessionKey];
         if (allowedSelectors.length == 0 || targetSelector == bytes4(0)) return;
-        
+
         if (!ss.ecdsaSelectorAllowed[sessionKey][targetSelector]) revert SelectorNotAllowed();
     }
 
@@ -789,14 +781,13 @@ abstract contract SessionKeyManager {
         SessionKeyPacked storage session,
         SessionStorage storage ss
     ) internal {
-        (address target, uint256 value, bytes memory data) = 
-            abi.decode(callData[4:], (address, uint256, bytes));
-        
+        (address target, uint256 value, bytes memory data) = abi.decode(callData[4:], (address, uint256, bytes));
+
         bytes4 targetSelector = data.length > 3 ? bytes4(data) : bytes4(0);
-        
+
         _validateCallP256(keyHash, target, targetSelector, value, session, ss);
         _updateLimits(session, value);
-        
+
         emit SessionUsed(keyHash, SignerType.P256, target, targetSelector, value);
     }
 
@@ -808,18 +799,20 @@ abstract contract SessionKeyManager {
     ) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
             abi.decode(callData[4:], (address[], uint256[], bytes[]));
-        
+
         uint256 totalValue = 0;
-        for (uint256 i = 0; i < targets.length; ) {
+        for (uint256 i = 0; i < targets.length;) {
             bytes4 targetSelector = datas[i].length > 3 ? bytes4(datas[i]) : bytes4(0);
-            
+
             _validateCallP256(keyHash, targets[i], targetSelector, values[i], session, ss);
             totalValue += values[i];
-            
+
             emit SessionUsed(keyHash, SignerType.P256, targets[i], targetSelector, values[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
-        
+
         _updateLimits(session, totalValue);
     }
 
@@ -834,7 +827,7 @@ abstract contract SessionKeyManager {
         if (session.maxValuePerTx > 0 && value > session.maxValuePerTx) {
             revert ValueExceedsPerTxLimit();
         }
-        
+
         _checkTargetAllowedP256(keyHash, target, ss);
         _checkSelectorAllowedP256(keyHash, targetSelector, ss);
     }
@@ -843,10 +836,13 @@ abstract contract SessionKeyManager {
         if (!ss.p256TargetAllowed[keyHash][target]) revert TargetNotAllowed();
     }
 
-    function _checkSelectorAllowedP256(bytes32 keyHash, bytes4 targetSelector, SessionStorage storage ss) internal view {
+    function _checkSelectorAllowedP256(bytes32 keyHash, bytes4 targetSelector, SessionStorage storage ss)
+        internal
+        view
+    {
         bytes4[] storage allowedSelectors = ss.p256AllowedSelectors[keyHash];
         if (allowedSelectors.length == 0 || targetSelector == bytes4(0)) return;
-        
+
         if (!ss.p256SelectorAllowed[keyHash][targetSelector]) revert SelectorNotAllowed();
     }
 
@@ -859,7 +855,7 @@ abstract contract SessionKeyManager {
             }
             session.valueUsed += uint128(value);
         }
-        
+
         if (session.maxCalls > 0) {
             if (session.callsUsed + 1 > session.maxCalls) {
                 revert MaxCallsExceeded();
@@ -868,11 +864,7 @@ abstract contract SessionKeyManager {
         }
     }
 
-    function _packValidationData(
-        bool success,
-        uint48 validUntil,
-        uint48 validAfter
-    ) internal pure returns (uint256) {
+    function _packValidationData(bool success, uint48 validUntil, uint48 validAfter) internal pure returns (uint256) {
         if (!success) {
             return 1; // SIG_VALIDATION_FAILED
         }

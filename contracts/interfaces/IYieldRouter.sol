@@ -159,12 +159,7 @@ interface IYieldRouter {
      * @param manager Manager contract (vault, pool, instant manager)
      * @param assetType Protocol type for routing
      */
-    function addYieldAsset(
-        address token,
-        address depositToken,
-        address manager,
-        AssetType assetType
-    ) external;
+    function addYieldAsset(address token, address depositToken, address manager, AssetType assetType) external;
 
     /**
      * @notice Updates weights for ALL registered yield assets
