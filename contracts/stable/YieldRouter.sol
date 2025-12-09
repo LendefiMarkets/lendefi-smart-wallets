@@ -797,10 +797,11 @@ contract YieldRouter is
         SkyConfig memory sky = skyConfig;
         // Step 1: USDC -> USDS via LitePSM
         IERC20(depositToken).forceApprove(sky.litePSM, amount);
-        uint256 usdsBalance = ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
+        uint256 usdsReceived = ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
+        require(usdsReceived == amount * 1e12, "Sky PSM deposit failed");
         // Step 2: USDS -> sUSDS via ERC4626 deposit
-        IERC20(sky.usds).forceApprove(sky.sUsds, usdsBalance);
-        IERC4626(sky.sUsds).deposit(usdsBalance, address(this));
+        IERC20(sky.usds).forceApprove(sky.sUsds, usdsReceived);
+        IERC4626(sky.sUsds).deposit(usdsReceived, address(this));
     }
 
     /**
@@ -824,16 +825,17 @@ contract YieldRouter is
     function _redeemSingleAsset(address token, uint256 redeemTarget, YieldAssetConfig storage config, address manager)
         internal
     {
+        uint256 received;
         if (config.assetType == AssetType.ONDO_OUSG) {
-            _redeemOUSG(token, redeemTarget, manager, config.depositToken);
+            (received,) = _redeemOUSG(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            _redeemAaveV3(token, redeemTarget, manager, config.depositToken);
+            received = _redeemAaveV3(token, redeemTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            _redeemSky(redeemTarget);
+            received = _redeemSky(redeemTarget);
         } else {
-            _redeemERC4626(redeemTarget, manager);
+            received = _redeemERC4626(redeemTarget, manager);
         }
-        emit ProtocolRedeemed(token, redeemTarget);
+        emit ProtocolRedeemed(token, redeemTarget, received);
     }
 
     /**
@@ -849,16 +851,17 @@ contract YieldRouter is
         YieldAssetConfig storage config,
         address manager
     ) internal {
+        uint256 sharesUsed;
         if (config.assetType == AssetType.ONDO_OUSG) {
-            _redeemOUSG(token, withdrawTarget, manager, config.depositToken);
+            (, sharesUsed) = _redeemOUSG(token, withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            _withdrawAaveV3(withdrawTarget, manager, config.depositToken);
+            sharesUsed = _withdrawAaveV3(withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            _withdrawSky(withdrawTarget);
+            sharesUsed = _withdrawSky(withdrawTarget);
         } else {
-            _withdrawERC4626(withdrawTarget, manager);
+            sharesUsed = _withdrawERC4626(withdrawTarget, manager);
         }
-        emit ProtocolWithdrawn(token, withdrawTarget);
+        emit ProtocolWithdrawn(token, withdrawTarget, sharesUsed);
     }
 
     /**
@@ -867,9 +870,15 @@ contract YieldRouter is
      * @param usdcTarget Target USDC amount to receive
      * @param manager InstantManager contract address
      * @param depositToken Token used to acquire OUSG (USDC)
+     * @return redeemed Actual USDC amount redeemed
      */
-    function _redeemOUSG(address token, uint256 usdcTarget, address manager, address depositToken) internal {
-        if (usdcTarget < ONDO_MIN_AMOUNT) return;
+    function _redeemOUSG(address token, uint256 usdcTarget, address manager, address depositToken)
+        internal
+        returns (uint256 redeemed, uint256 ousgRedeemed)
+    {
+        if (usdcTarget < ONDO_MIN_AMOUNT) return (0, 0);
+
+        uint256 usdcBefore = IERC20(depositToken).balanceOf(address(this));
 
         // Get OUSG oracle price to convert USDC target to OUSG amount
         IOUSGInstantManager instantManager = IOUSGInstantManager(manager);
@@ -887,6 +896,9 @@ contract YieldRouter is
 
         IERC20(token).forceApprove(manager, ousgAmount);
         IOUSGInstantManager(manager).redeem(ousgAmount, depositToken, 0);
+
+        redeemed = IERC20(depositToken).balanceOf(address(this)) - usdcBefore;
+        ousgRedeemed = ousgAmount;
     }
 
     /**
@@ -895,13 +907,19 @@ contract YieldRouter is
      * @param redeemTarget Target USDC amount to receive
      * @param manager Aave V3 pool address
      * @param depositToken Underlying token (USDC)
+     * @return redeemed Actual USDC amount redeemed
      */
-    function _redeemAaveV3(address token, uint256 redeemTarget, address manager, address depositToken) internal {
+    function _redeemAaveV3(address token, uint256 redeemTarget, address manager, address depositToken)
+        internal
+        returns (uint256 redeemed)
+    {
+        uint256 usdcBefore = IERC20(depositToken).balanceOf(address(this));
         uint256 balance = IERC20(token).balanceOf(address(this));
         uint256 withdrawAmount = redeemTarget > balance ? balance : redeemTarget;
         if (withdrawAmount > 0) {
             IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
         }
+        redeemed = IERC20(depositToken).balanceOf(address(this)) - usdcBefore;
     }
 
     /**
@@ -910,20 +928,28 @@ contract YieldRouter is
      * @param manager Aave V3 pool address
      * @param depositToken Underlying token (USDC)
      */
-    function _withdrawAaveV3(uint256 withdrawTarget, address manager, address depositToken) internal {
+    function _withdrawAaveV3(uint256 withdrawTarget, address manager, address depositToken)
+        internal
+        returns (uint256 withdrawn)
+    {
         uint256 maxWithdraw = IERC20(depositToken).balanceOf(address(this));
         uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
         if (withdrawAmount > 0) {
             IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
+            withdrawn = withdrawAmount;
         }
     }
 
     /**
      * @notice Redeem sUSDS shares for USDC
      * @param redeemTarget Target USDC amount to receive
+     * @return redeemed Actual USDC amount redeemed
      */
-    function _redeemSky(uint256 redeemTarget) internal {
+    function _redeemSky(uint256 redeemTarget) internal returns (uint256 redeemed) {
         SkyConfig memory sky = skyConfig;
+        // The contract has `usdc` state variable.
+        uint256 usdcBalanceBefore = IERC20(usdc).balanceOf(address(this));
+
         IERC4626 sUsdsVault = IERC4626(sky.sUsds);
         uint256 usdsTarget = redeemTarget * 1e12;
         uint256 maxShares = sUsdsVault.maxRedeem(address(this));
@@ -946,29 +972,32 @@ contract YieldRouter is
             IERC20(sky.usds).forceApprove(sky.litePSM, usdsRecieved);
             ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
         }
+
+        redeemed = IERC20(usdc).balanceOf(address(this)) - usdcBalanceBefore;
     }
 
     /**
      * @notice Withdraw USDC from Sky sUSDS (direct asset-based withdrawal)
      * @param withdrawTarget Target USDC amount to receive
      */
-    function _withdrawSky(uint256 withdrawTarget) internal {
+    function _withdrawSky(uint256 withdrawTarget) internal returns (uint256 sharesUsed) {
         SkyConfig memory sky = skyConfig;
         IERC4626 sUsdsVault = IERC4626(sky.sUsds);
         uint256 usdsTarget = withdrawTarget * 1e12;
         uint256 maxWithdraw = sUsdsVault.maxWithdraw(address(this));
-        uint256 usdsBalance;
+        uint256 usdsWithdrawn;
         if (maxWithdraw > 0) {
-            uint256 withdrawAmount = usdsTarget > maxWithdraw ? maxWithdraw : usdsTarget;
-            if (withdrawAmount > 0) {
-                usdsBalance = sUsdsVault.withdraw(withdrawAmount, address(this), address(this));
+            usdsWithdrawn = usdsTarget > maxWithdraw ? maxWithdraw : usdsTarget;
+            if (usdsWithdrawn > 0) {
+                sharesUsed = sUsdsVault.withdraw(usdsWithdrawn, address(this), address(this));
             }
         }
         // Convert USDS to USDC via LitePSM
-        uint256 usdcAmount = usdsBalance / 1e12;
+        uint256 usdcAmount = usdsWithdrawn / 1e12;
         if (usdcAmount > 0) {
-            IERC20(sky.usds).forceApprove(sky.litePSM, usdsBalance);
-            ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
+            IERC20(sky.usds).forceApprove(sky.litePSM, usdsWithdrawn);
+            uint256 usdsUsed = ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
+            require(usdsUsed == usdcAmount * 1e12, "Sky PSM withdraw failed");
         }
     }
 
@@ -976,8 +1005,12 @@ contract YieldRouter is
      * @notice Redeem shares from ERC4626 vault for USDC
      * @param redeemTarget Target USDC amount to receive
      * @param manager Vault address
+     * @return redeemed Actual USDC amount redeemed
      */
-    function _redeemERC4626(uint256 redeemTarget, address manager) internal {
+    function _redeemERC4626(uint256 redeemTarget, address manager) internal returns (uint256 redeemed) {
+        // We assume the vault asset is USDC.
+        uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
+
         IERC4626 vaultContract = IERC4626(manager);
         uint256 maxShares = vaultContract.maxRedeem(address(this));
 
@@ -989,6 +1022,8 @@ contract YieldRouter is
         if (sharesToRedeem > 0) {
             vaultContract.redeem(sharesToRedeem, address(this), address(this));
         }
+
+        redeemed = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
     }
 
     /**
@@ -996,14 +1031,13 @@ contract YieldRouter is
      * @param withdrawTarget Target USDC amount to receive
      * @param manager Vault address
      */
-    function _withdrawERC4626(uint256 withdrawTarget, address manager) internal {
+    function _withdrawERC4626(uint256 withdrawTarget, address manager) internal returns (uint256 shares) {
         IERC4626 vaultContract = IERC4626(manager);
         uint256 maxWithdraw = vaultContract.maxWithdraw(address(this));
-        if (maxWithdraw > 0) {
-            uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
-            if (withdrawAmount > 0) {
-                vaultContract.withdraw(withdrawAmount, address(this), address(this));
-            }
+
+        uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
+        if (withdrawAmount > 0) {
+            shares = vaultContract.withdraw(withdrawAmount, address(this), address(this));
         }
     }
 
