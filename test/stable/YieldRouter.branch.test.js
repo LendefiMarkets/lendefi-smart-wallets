@@ -143,6 +143,64 @@ describe("YieldRouter - Branch Coverage", function () {
         });
     });
 
+    describe("Pausable", function () {
+        it("Should revert depositToProtocols when paused", async function () {
+            const { router, usdl, manager } = await loadFixture(usdlFixture);
+            
+            await router.connect(manager).pause();
+            
+            // Impersonate vault
+            await network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [await usdl.getAddress()],
+            });
+            const vaultSigner = await ethers.getSigner(await usdl.getAddress());
+            
+            // Fund vault signer with ETH for gas
+            await network.provider.send("hardhat_setBalance", [
+                await usdl.getAddress(),
+                "0x1000000000000000000", // 1 ETH
+            ]);
+
+            await expect(
+                router.connect(vaultSigner).depositToProtocols(ethers.parseUnits("100", 6))
+            ).to.be.revertedWithCustomError(router, "EnforcedPause");
+        });
+
+        it("Should revert redeemFromProtocols when paused", async function () {
+            const { router, usdl, manager } = await loadFixture(usdlFixture);
+            
+            await router.connect(manager).pause();
+            
+            // Impersonate vault
+            await network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [await usdl.getAddress()],
+            });
+            const vaultSigner = await ethers.getSigner(await usdl.getAddress());
+            
+            // Fund vault signer with ETH for gas
+            await network.provider.send("hardhat_setBalance", [
+                await usdl.getAddress(),
+                "0x1000000000000000000", // 1 ETH
+            ]);
+
+            await expect(
+                router.connect(vaultSigner).redeemFromProtocols(ethers.parseUnits("100", 6))
+            ).to.be.revertedWithCustomError(router, "EnforcedPause");
+        });
+
+        it("Should revert performUpkeep when paused", async function () {
+            const { router, manager } = await loadFixture(usdlFixture);
+            
+            await router.connect(manager).pause();
+            
+            await expect(
+                router.performUpkeep("0x")
+            ).to.be.revertedWithCustomError(router, "EnforcedPause");
+        });
+    });
+
     describe("addYieldAsset - Zero Address Checks", function () {
         it("Should revert addYieldAsset with zero token", async function () {
             const { router, manager, usdc, yieldVault } = await loadFixture(usdlFixture);
@@ -481,11 +539,12 @@ describe("YieldRouter - Branch Coverage", function () {
         }
 
         it("Should withdraw all funds to vault in emergency", async function () {
-            const { router, usdl, owner, usdc, yieldVault } = await loadFixture(setupWithDeposits);
+            const { router, usdl, owner, usdc, yieldVault, manager } = await loadFixture(setupWithDeposits);
             
             const routerAddress = await router.getAddress();
             expect(await yieldVault.balanceOf(routerAddress)).to.be.gt(0);
             
+            await router.connect(manager).pause();
             await router.connect(owner).emergencyWithdraw();
             
             expect(await yieldVault.balanceOf(routerAddress)).to.equal(0);
@@ -494,11 +553,20 @@ describe("YieldRouter - Branch Coverage", function () {
         });
 
         it("Should revert when caller is not admin", async function () {
-            const { router, user1 } = await loadFixture(setupWithDeposits);
+            const { router, user1, manager } = await loadFixture(setupWithDeposits);
             
+            await router.connect(manager).pause();
             await expect(
                 router.connect(user1).emergencyWithdraw()
-            ).to.be.reverted;
+            ).to.be.reverted; // AccessControl error
+        });
+
+        it("Should revert when contract is not paused", async function () {
+            const { router, owner } = await loadFixture(setupWithDeposits);
+            
+            await expect(
+                router.connect(owner).emergencyWithdraw()
+            ).to.be.revertedWithCustomError(router, "ExpectedPause");
         });
     });
 
