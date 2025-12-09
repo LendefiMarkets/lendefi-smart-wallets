@@ -411,7 +411,7 @@ describe("LendefiPaymaster", function () {
             )).to.emit(paymaster, "GasSubsidized");
         });
 
-        it("Should skip postOp for postOpReverted mode", async function () {
+        it("Should charge gas for postOpReverted mode (emit GasSubsidized)", async function () {
             const { paymaster, entryPoint, owner, user1 } = await loadFixture(deployFixture);
             
             const context = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -426,13 +426,13 @@ describe("LendefiPaymaster", function () {
             });
             const entryPointSigner = await ethers.getSigner(entryPoint.target);
             
-            // Test postOpReverted mode (mode = 2) - should not emit GasSubsidized
+            // Test postOpReverted mode (mode = 2) - should emit GasSubsidized (no refund)
             await expect(paymaster.connect(entryPointSigner).postOp(
                 2, // PostOpMode.postOpReverted
                 context,
                 ethers.parseEther("0.01"),
                 ethers.parseUnits("10", "gwei")
-            )).to.not.emit(paymaster, "GasSubsidized");
+            )).to.emit(paymaster, "GasSubsidized");
         });
 
         it("Should reject postOp from non-entryPoint", async function () {
