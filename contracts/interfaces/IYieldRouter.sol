@@ -99,6 +99,11 @@ interface IYieldRouter {
     /// @param sharesUsed Shares used for withdrawal (if applicable)
     event ProtocolWithdrawn(address indexed token, uint256 amount, uint256 sharesUsed);
 
+    /// @notice Emitted when emergency withdrawal is performed
+    /// @param receiver Address receiving the funds (vault)
+    /// @param amount Amount of USDC withdrawn
+    event EmergencyWithdrawal(address indexed receiver, uint256 amount);
+
     // ============ Errors ============
 
     /// @notice Thrown when zero address is provided
@@ -283,6 +288,16 @@ interface IYieldRouter {
      * @return vault USDL vault address
      */
     function getVault() external view returns (address vault);
+
+    /**
+     * @notice Pauses the contract
+     */
+    function pause() external;
+
+    /**
+     * @notice Unpauses the contract
+     */
+    function unpause() external;
 
     /**
      * @notice Emergency withdraw all assets to vault
