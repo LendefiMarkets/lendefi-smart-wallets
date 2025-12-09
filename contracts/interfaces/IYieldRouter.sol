@@ -126,6 +126,9 @@ interface IYieldRouter {
     /// @notice Thrown when caller is not self (for external try/catch wrapper)
     error OnlySelf();
 
+    /// @notice Thrown when caller is not the vault
+    error OnlyVault(address caller);
+
     // ============ Core Routing Functions ============
 
     /**
@@ -142,12 +145,6 @@ interface IYieldRouter {
      * @return redeemed Actual amount of USDC redeemed
      */
     function redeemFromProtocols(uint256 amount) external returns (uint256 redeemed);
-
-    /**
-     * @notice Get total value across all yield protocols (in USDC)
-     * @return value Total value in USDC (6 decimals)
-     */
-    function getTotalValue() external view returns (uint256 value);
 
     // ============ Yield Asset Management ============
 
@@ -177,6 +174,12 @@ interface IYieldRouter {
      * @param token Yield token address to remove
      */
     function removeYieldAsset(address token) external;
+
+    /**
+     * @notice Get total value across all yield protocols (in USDC)
+     * @return value Total value in USDC (6 decimals)
+     */
+    function getTotalValue() external view returns (uint256 value);
 
     /**
      * @notice Get yield asset configuration
