@@ -269,7 +269,7 @@ contract YieldRouter is
      *      Two-step deactivation: updateWeights([..., 0, ...]) -> removeYieldAsset()
      * @param weights Ordered array of weights matching _yieldAssetWeights.keys() order
      */
-    function updateWeights(uint256[] calldata weights) external onlyRole(MANAGER_ROLE) {
+    function updateWeights(uint256[] calldata weights) external nonReentrant onlyRole(MANAGER_ROLE) {
         address[] memory tokens = _yieldAssetWeights.keys();
 
         // Enforce: must provide weight for every registered asset
