@@ -226,9 +226,10 @@ contract USDL is
     function setYieldRouter(address router) external nonZeroAddress(router) onlyRole(DEFAULT_ADMIN_ROLE) {
         address oldRouter = address(yieldRouter);
 
-        // Revoke old router's role if exists
+        // Revoke old router's role and allowance if exists
         if (oldRouter != address(0)) {
             _revokeRole(ROUTER_ROLE, oldRouter);
+            IERC20(assetAddress).approve(oldRouter, 0);
         }
 
         yieldRouter = IYieldRouter(router);
@@ -902,7 +903,7 @@ contract USDL is
             _shares[from] = fromShares - rawShares;
         }
         _shares[to] += rawShares;
-        lastDepositBlock[to] = block.number;
+        // lastDepositBlock[to] = block.number; // Removed to prevent griefing
 
         uint256 rebasedAmount = _toRebasedAmount(rawShares, Math.Rounding.Floor);
         emit Transfer(from, to, rebasedAmount);
