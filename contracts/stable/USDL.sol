@@ -961,7 +961,11 @@ contract USDL is
         return rebasedAmount.mulDiv(REBASE_INDEX_PRECISION, rebaseIndex, rounding);
     }
 
-    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding) internal view returns (uint256 rebasedAmount) {
+    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding)
+        internal
+        view
+        returns (uint256 rebasedAmount)
+    {
         if (rebaseIndex == 0) return rawShares;
         return rawShares.mulDiv(rebaseIndex, REBASE_INDEX_PRECISION, rounding);
     }
