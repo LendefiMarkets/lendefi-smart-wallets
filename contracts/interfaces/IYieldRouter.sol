@@ -82,6 +82,21 @@ interface IYieldRouter {
     /// @param amount Amount of USDC allocated (indexed for gas optimization)
     event PendingDepositsAllocated(uint256 indexed amount);
 
+    /// @notice Emitted when assets are redeemed from a specific protocol
+    /// @param token Yield asset token address
+    /// @param amount Amount redeemed
+    event ProtocolRedeemed(address indexed token, uint256 amount);
+
+    /// @notice Emitted when assets are deposited to a specific protocol
+    /// @param token Yield asset token address
+    /// @param amount Amount deposited
+    event ProtocolDeposited(address indexed token, uint256 amount);
+
+    /// @notice Emitted when assets are withdrawn from a specific protocol
+    /// @param token Yield asset token address
+    /// @param amount Amount withdrawn
+    event ProtocolWithdrawn(address indexed token, uint256 amount);
+
     // ============ Errors ============
 
     /// @notice Thrown when zero address is provided
