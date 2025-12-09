@@ -20,6 +20,7 @@ contract LendefiPaymaster is BasePaymaster {
         BASIC, // 50% gas subsidy
         PREMIUM, // 90% gas subsidy
         ULTIMATE // 100% gas subsidy
+
     }
 
     struct UserSubscription {
@@ -118,11 +119,7 @@ contract LendefiPaymaster is BasePaymaster {
         bytes32,
         /*userOpHash*/
         uint256 maxCost
-    )
-        internal
-        override
-        returns (bytes memory context, uint256 validationData)
-    {
+    ) internal override returns (bytes memory context, uint256 validationData) {
         // Validate wallet
         address wallet = userOp.sender;
         if (!_isValidWallet(wallet)) revert InvalidWallet();
@@ -167,14 +164,11 @@ contract LendefiPaymaster is BasePaymaster {
      * @dev Post-operation accounting
      */
     function _postOp(
-        PostOpMode /*mode*/,
+        PostOpMode, /*mode*/
         bytes calldata context,
         uint256 actualGasCost,
         uint256 /*actualUserOpFeePerGas*/
-    )
-        internal
-        override
-    {
+    ) internal override {
         (address wallet, uint256 estimatedGas, /*uint256 gasUsedBefore*/, SubscriptionTier tier) =
             abi.decode(context, (address, uint256, uint256, SubscriptionTier));
 
@@ -193,7 +187,10 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Grant subscription to user
      */
-    function grantSubscription(address user, SubscriptionTier tier, uint256 durationInSeconds) external onlyAuthorized {
+    function grantSubscription(address user, SubscriptionTier tier, uint256 durationInSeconds)
+        external
+        onlyAuthorized
+    {
         if (user == address(0)) revert ZeroAddress();
         if (tier == SubscriptionTier.NONE) revert InvalidTier();
 
