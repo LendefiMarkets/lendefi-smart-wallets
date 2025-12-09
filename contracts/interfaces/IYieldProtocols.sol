@@ -18,7 +18,6 @@ enum AssetType {
     AAVE_V3, // Aave V3 lending pool
     ONDO_OUSG, // Ondo OUSG InstantManager (requires whitelist)
     SKY_SUSDS // Sky sUSDS (USDC → USDS via LitePSM → sUSDS via ERC4626)
-
 }
 
 // ============ Aave V3 Interface ============

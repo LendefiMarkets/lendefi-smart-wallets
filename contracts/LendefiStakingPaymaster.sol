@@ -81,7 +81,12 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Validate paymaster is willing to sponsor this UserOp
      */
-    function _validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, /*userOpHash*/ uint256 maxCost)
+    function _validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32,
+        /*userOpHash*/
+        uint256 maxCost
+    )
         internal
         view
         override
@@ -122,7 +127,12 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Post-operation handler - records gas usage
      */
-    function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 /*actualUserOpFeePerGas*/ )
+    function _postOp(
+        PostOpMode mode,
+        bytes calldata context,
+        uint256 actualGasCost,
+        uint256 /*actualUserOpFeePerGas*/
+    )
         internal
         override
     {

@@ -20,7 +20,6 @@ contract LendefiPaymaster is BasePaymaster {
         BASIC, // 50% gas subsidy
         PREMIUM, // 90% gas subsidy
         ULTIMATE // 100% gas subsidy
-
     }
 
     struct UserSubscription {
@@ -111,7 +110,12 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Validate user operation for gas sponsorship
      */
-    function _validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, /*userOpHash*/ uint256 maxCost)
+    function _validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32,
+        /*userOpHash*/
+        uint256 maxCost
+    )
         internal
         override
         returns (bytes memory context, uint256 validationData)
@@ -152,7 +156,12 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Post-operation accounting
      */
-    function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 /*actualUserOpFeePerGas*/ )
+    function _postOp(
+        PostOpMode mode,
+        bytes calldata context,
+        uint256 actualGasCost,
+        uint256 /*actualUserOpFeePerGas*/
+    )
         internal
         override
     {
@@ -177,10 +186,7 @@ contract LendefiPaymaster is BasePaymaster {
     /**
      * @dev Grant subscription to user
      */
-    function grantSubscription(address user, SubscriptionTier tier, uint256 durationInSeconds)
-        external
-        onlyAuthorized
-    {
+    function grantSubscription(address user, SubscriptionTier tier, uint256 durationInSeconds) external onlyAuthorized {
         if (user == address(0)) revert ZeroAddress();
         if (tier == SubscriptionTier.NONE) revert InvalidTier();
 
