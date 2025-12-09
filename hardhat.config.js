@@ -1,6 +1,7 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("@openzeppelin/hardhat-upgrades");
 require("hardhat-gas-reporter");
+require("hardhat-contract-sizer");
 require("solidity-coverage");
 require("dotenv").config();
 
@@ -96,6 +97,13 @@ module.exports = {
     currency: "USD",
     coinmarketcap: process.env.COINMARKETCAP_API_KEY,
     excludeContracts: ["Mock"],
+  },
+  contractSizer: {
+    alphaSort: true,
+    disambiguatePaths: false,
+    runOnCompile: false,
+    strict: true,
+    only: [':USDL$', ':YieldRouter$', ':SmartWallet$', ':LendefiPaymaster$', ':LendefiStaking$'],
   },
   paths: {
     sources: "./contracts",
