@@ -313,7 +313,6 @@ Comprehensive Chainlink oracle validation for OUSG price:
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `MAX_YIELD_ASSETS` | 10 | Gas limit protection |
-| `MAX_ORACLE_STALENESS` | 1 hour | Oracle freshness requirement |
 | `MIN_AUTOMATION_INTERVAL` | 1 hour | Minimum accrual frequency |
 | `BASIS_POINTS` | 10,000 | Weight precision |
 
