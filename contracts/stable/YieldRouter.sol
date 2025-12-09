@@ -207,7 +207,7 @@ contract YieldRouter is
         // If we don't have enough tracked USDC, redeem from yield assets
         if (tracked < amount) {
             uint256 needed = amount - tracked;
-            _redeemFromYieldAssets(needed);
+            _withdrawFromYieldAssets(needed);
             // Re-read after redemption (state changed)
             tracked = trackedUSDCBalance;
         }
@@ -283,7 +283,7 @@ contract YieldRouter is
             if (oldWeight > 0 && newWeight == 0) {
                 uint256 balance = IERC20(token).balanceOf(address(this));
                 if (balance > 0) {
-                    uint256 redeemed = _redeemFromSingleYieldAsset(token, balance);
+                    uint256 redeemed = _redeemFromSingleYieldAsset(token, type(uint256).max);
                     emit YieldAssetDrained(token, redeemed);
                 }
             }
@@ -677,10 +677,10 @@ contract YieldRouter is
     }
 
     /**
-     * @notice Redeem USDC from yield assets by weight
+     * @notice Redeem USDC from yield assets by weight (using withdraw flow)
      * @param amount Target amount of USDC to redeem
      */
-    function _redeemFromYieldAssets(uint256 amount) internal {
+    function _withdrawFromYieldAssets(uint256 amount) internal {
         address[] memory tokens = _yieldAssetWeights.keys();
         uint256 length = tokens.length;
         uint256 remaining = amount;
@@ -724,7 +724,7 @@ contract YieldRouter is
                 address manager = config.manager;
 
                 uint256 usdcBefore = IERC20(_usdc).balanceOf(address(this));
-                _redeemSingleAsset(token, redeemTarget, config, manager);
+                _withdrawSingleAsset(token, redeemTarget, config, manager);
 
                 uint256 actualRedeemed = IERC20(_usdc).balanceOf(address(this)) - usdcBefore;
                 // Track the redeemed USDC
@@ -855,7 +855,7 @@ contract YieldRouter is
         if (config.assetType == AssetType.ONDO_OUSG) {
             (, sharesUsed) = _redeemOUSG(token, withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            sharesUsed = _withdrawAaveV3(withdrawTarget, manager, config.depositToken);
+            sharesUsed = _withdrawAaveV3(token, withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
             sharesUsed = _withdrawSky(withdrawTarget);
         } else {
@@ -924,15 +924,16 @@ contract YieldRouter is
 
     /**
      * @notice Withdraw USDC from Aave V3 (direct asset-based withdrawal)
+     * @param token aToken address
      * @param withdrawTarget Target USDC amount to receive
      * @param manager Aave V3 pool address
      * @param depositToken Underlying token (USDC)
      */
-    function _withdrawAaveV3(uint256 withdrawTarget, address manager, address depositToken)
+    function _withdrawAaveV3(address token, uint256 withdrawTarget, address manager, address depositToken)
         internal
         returns (uint256 withdrawn)
     {
-        uint256 maxWithdraw = IERC20(depositToken).balanceOf(address(this));
+        uint256 maxWithdraw = IERC20(token).balanceOf(address(this));
         uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
         if (withdrawAmount > 0) {
             IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
@@ -1121,7 +1122,7 @@ contract YieldRouter is
      */
     function _harvestYield(uint256 amount) internal {
         if (amount == 0) return;
-        _redeemFromYieldAssets(amount);
+        _withdrawFromYieldAssets(amount);
     }
 
     // ============ Upgrade Authorization ============
