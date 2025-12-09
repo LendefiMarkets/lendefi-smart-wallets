@@ -437,6 +437,10 @@ contract USDL is
         emit BridgeBurn(msg.sender, account, amount);
     }
 
+    /// @inheritdoc IGetCCIPAdmin
+    function getCCIPAdmin() external view override returns (address) {
+        return ccipAdmin;
+    }
     // ============ ERC4626 Deposit/Withdraw ============
 
     /**
@@ -611,10 +615,9 @@ contract USDL is
             IERC20(assetAddress).safeTransfer(treasury, fee);
         }
 
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
         // Transfer to receiver
         IERC20(assetAddress).safeTransfer(receiver, netAssets);
-
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
     }
 
     /**
@@ -682,10 +685,9 @@ contract USDL is
             IERC20(assetAddress).safeTransfer(treasury, fee);
         }
 
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
         // Transfer to receiver
         IERC20(assetAddress).safeTransfer(receiver, netAssets);
-
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
     }
 
     // ============ ERC20 Functions ============
@@ -707,11 +709,6 @@ contract USDL is
     }
 
     // ============ View Functions ============
-
-    /// @inheritdoc IGetCCIPAdmin
-    function getCCIPAdmin() external view override returns (address) {
-        return ccipAdmin;
-    }
 
     /// @inheritdoc IUSDL
     function asset() public view override(IERC4626, IUSDL) returns (address) {
