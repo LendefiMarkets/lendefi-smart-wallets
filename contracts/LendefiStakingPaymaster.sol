@@ -86,12 +86,7 @@ contract LendefiStakingPaymaster is BasePaymaster {
         bytes32,
         /*userOpHash*/
         uint256 maxCost
-    )
-        internal
-        view
-        override
-        returns (bytes memory context, uint256 validationData)
-    {
+    ) internal view override returns (bytes memory context, uint256 validationData) {
         address user = userOp.sender;
 
         // Validate wallet is from our factory
@@ -127,12 +122,7 @@ contract LendefiStakingPaymaster is BasePaymaster {
     /**
      * @notice Post-operation handler - records gas usage
      */
-    function _postOp(
-        PostOpMode mode,
-        bytes calldata context,
-        uint256 actualGasCost,
-        uint256 /*actualUserOpFeePerGas*/
-    )
+    function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 /*actualUserOpFeePerGas*/ )
         internal
         override
     {
