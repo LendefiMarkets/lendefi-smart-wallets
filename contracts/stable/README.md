@@ -193,7 +193,18 @@ In v4.0, every user deposit immediately called `depositToProtocols()`, triggerin
 
 **Key Insight:** When pending deposits ≈ yield to harvest, they cancel out and we move nothing!
 
-### 4. Multi-Protocol Yield Generation
+### 4. Withdraw vs Redeem Flows (v5.1)
+
+To ensure robust handling of different asset types (ERC4626 shares vs underlying assets), YieldRouter implements strict separation of concerns:
+
+| Flow | Function | Use Case | Logic |
+|------|----------|----------|-------|
+| **Withdraw** | `_withdraw*` | Amount-based operations (Harvesting yield, User withdrawals) | Withdraws specific amount of underlying asset (USDC). Ensures exact output. |
+| **Redeem** | `_redeem*` | Share-based operations (Auto-drain, Emergency withdraw) | Burns specific amount of shares. Used when exiting positions completely. |
+
+This separation prevents issues where share-to-asset conversion rates might leave dust or fail to extract exact amounts needed for rebalancing.
+
+### 5. Multi-Protocol Yield Generation
 
 YieldRouter diversifies across institutional-grade yield sources:
 
@@ -215,7 +226,7 @@ Example conservative allocation:
                     100%
 ```
 
-### 5. Minimal Fee Structure
+### 6. Minimal Fee Structure
 
 | Fee | Amount | When Applied |
 |-----|--------|--------------|
@@ -224,7 +235,7 @@ Example conservative allocation:
 | **Management Fee** | **0%** | Never |
 | **Performance Fee** | **0%** | Never |
 
-### 6. Cross-Chain Native (CCIP)
+### 7. Cross-Chain Native (CCIP)
 
 USDL is designed for multi-chain from day one:
 
