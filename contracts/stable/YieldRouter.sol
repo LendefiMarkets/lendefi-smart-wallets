@@ -354,82 +354,21 @@ contract YieldRouter is
      *      This saves gas by avoiding unnecessary deposit/withdraw pairs
      */
     function performUpkeep(bytes calldata /* performData */ ) external override nonReentrant whenNotPaused {
-        if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
-
-        uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
-        if (timeSinceLastAccrual < yieldAccrualInterval) {
-            revert UpkeepNotNeeded();
-        }
-
+        _validateUpkeepWindow();
         lastYieldAccrualTimestamp = block.timestamp;
 
-        // Cache values
-        uint256 pending = pendingDeposits;
-        uint256 currentDeposited = totalDepositedAssets;
-
+        (uint256 pending, uint256 currentDeposited) = _snapshotState();
         if (currentDeposited == 0 && pending == 0) return;
 
-        IUSDL usdl = IUSDL(vault);
+        uint256 yieldAccrued = _calculateYieldAccrued(pending);
 
-        // Calculate yield: (protocol value) - (what we deployed to protocols)
-        // trackedUSDCBalance includes pending deposits (not yet in protocols)
-        // So deployed = trackedUSDCBalance - pending
-        uint256 actualProtocolValue = _calculateTrackedValue();
-        uint256 deployedToProtocols = trackedUSDCBalance - pending;
-
-        // Yield = how much more protocols are worth than what we put in
-        // Note: actualProtocolValue includes trackedUSDCBalance which has pending
-        // So actual yield from protocols = (actualProtocolValue - pending) - deployedToProtocols
-        uint256 yieldAccrued = 0;
-        uint256 protocolValueOnly = actualProtocolValue - pending; // Exclude pending USDC from value
-        if (protocolValueOnly > deployedToProtocols) {
-            yieldAccrued = protocolValueOnly - deployedToProtocols;
-        }
-
-        // Clear pending deposits
         if (pending > 0) {
-            pendingDeposits = 0;
-            emit PendingDepositsAllocated(pending);
+            _clearPendingDeposits(pending);
         }
 
-        // === NETTING LOGIC ===
-        // pending = USDC sitting idle that should go to protocols
-        // yieldAccrued = value we need to pull from protocols to USDC
-        // Instead of: allocate(pending) + harvest(yield), we net them
+        _netDepositsAndYield(pending, yieldAccrued);
 
-        if (pending > yieldAccrued) {
-            // More deposits than yield: only deposit the net amount
-            // yieldAccrued worth of USDC stays idle (as harvested yield)
-            // Remaining goes to protocols
-            uint256 netDeposit = pending - yieldAccrued;
-            _allocateToYieldAssets(netDeposit);
-            // trackedUSDCBalance stays correct: we had pending, we allocated netDeposit
-            // so yieldAccrued stays as USDC which will be tracked
-        } else if (yieldAccrued > pending) {
-            // More yield than deposits: only withdraw the net amount
-            // pending is used to offset some yield (stays as USDC)
-            // Only withdraw what's still needed
-            uint256 netWithdraw = yieldAccrued - pending;
-            _harvestYield(netWithdraw);
-        }
-        // If equal: nothing to move! Pending USDC = yield to harvest, perfect offset
-
-        // Update USDL state if there was yield
-        if (yieldAccrued > 0 && currentDeposited > 0) {
-            // Recalculate actual value after netting operations
-            uint256 newTotalValue = _calculateTrackedValue();
-
-            uint256 currentIndex = usdl.rebaseIndex();
-            uint256 newIndex = (currentIndex * newTotalValue) / currentDeposited;
-
-            usdl.updateRebaseIndex(newIndex);
-            usdl.updateTotalDepositedAssets(newTotalValue);
-
-            emit YieldAccrued(yieldAccrued, newTotalValue);
-        } else if (pending > 0 && yieldAccrued == 0) {
-            // No yield, but we had pending deposits - just update total assets
-            usdl.updateTotalDepositedAssets(_calculateTrackedValue());
-        }
+        _updateUsdlAfterAccrual(IUSDL(vault), yieldAccrued, currentDeposited, pending);
     }
 
     /**
@@ -652,6 +591,55 @@ contract YieldRouter is
     }
 
     // ============ Internal Functions ============
+
+    function _clearPendingDeposits(uint256 pending) internal {
+        pendingDeposits = 0;
+        emit PendingDepositsAllocated(pending);
+    }
+
+    function _netDepositsAndYield(uint256 pending, uint256 yieldAccrued) internal {
+        // pending = USDC sitting idle that should go to protocols
+        // yieldAccrued = value we need to pull from protocols to USDC
+        // Instead of: allocate(pending) + harvest(yield), we net them
+
+        if (pending > yieldAccrued) {
+            // More deposits than yield: only deposit the net amount
+            // yieldAccrued worth of USDC stays idle (as harvested yield)
+            // Remaining goes to protocols
+            uint256 netDeposit = pending - yieldAccrued;
+            _allocateToYieldAssets(netDeposit);
+            // trackedUSDCBalance stays correct: we had pending, we allocated netDeposit
+            // so yieldAccrued stays as USDC which will be tracked
+        } else if (yieldAccrued > pending) {
+            // More yield than deposits: only withdraw the net amount
+            // pending is used to offset some yield (stays as USDC)
+            // Only withdraw what's still needed
+            uint256 netWithdraw = yieldAccrued - pending;
+            _harvestYield(netWithdraw);
+        }
+        // If equal: nothing to move! Pending USDC = yield to harvest, perfect offset
+    }
+
+    function _updateUsdlAfterAccrual(IUSDL usdl, uint256 yieldAccrued, uint256 currentDeposited, uint256 pending)
+        internal
+    {
+        // Update USDL state if there was yield
+        if (yieldAccrued > 0 && currentDeposited > 0) {
+            // Recalculate actual value after netting operations
+            uint256 newTotalValue = _calculateTrackedValue();
+
+            uint256 currentIndex = usdl.rebaseIndex();
+            uint256 newIndex = (currentIndex * newTotalValue) / currentDeposited;
+
+            usdl.updateRebaseIndex(newIndex);
+            usdl.updateTotalDepositedAssets(newTotalValue);
+
+            emit YieldAccrued(yieldAccrued, newTotalValue);
+        } else if (pending > 0 && yieldAccrued == 0) {
+            // No yield, but we had pending deposits - just update total assets
+            usdl.updateTotalDepositedAssets(_calculateTrackedValue());
+        }
+    }
 
     /**
      * @notice Allocate USDC to yield assets by weight
@@ -1191,6 +1179,36 @@ contract YieldRouter is
                 _depositToProtocol(tokens[i], yieldAssetConfigs[tokens[i]], allocation);
                 allocated += allocation;
             }
+        }
+    }
+
+    function _validateUpkeepWindow() internal view {
+        if (yieldAccrualInterval == 0) revert UpkeepNotNeeded();
+
+        uint256 timeSinceLastAccrual = block.timestamp - lastYieldAccrualTimestamp;
+        if (timeSinceLastAccrual < yieldAccrualInterval) {
+            revert UpkeepNotNeeded();
+        }
+    }
+
+    function _snapshotState() internal view returns (uint256 pending, uint256 currentDeposited) {
+        pending = pendingDeposits;
+        currentDeposited = totalDepositedAssets;
+    }
+
+    function _calculateYieldAccrued(uint256 pending) internal view returns (uint256 yieldAccrued) {
+        // Calculate yield: (protocol value) - (what we deployed to protocols)
+        // trackedUSDCBalance includes pending deposits (not yet in protocols)
+        // So deployed = trackedUSDCBalance - pending
+        uint256 actualProtocolValue = _calculateTrackedValue();
+        uint256 deployedToProtocols = trackedUSDCBalance - pending;
+
+        // Yield = how much more protocols are worth than what we put in
+        // Note: actualProtocolValue includes trackedUSDCBalance which has pending
+        // So actual yield from protocols = (actualProtocolValue - pending) - deployedToProtocols
+        uint256 protocolValueOnly = actualProtocolValue - pending; // Exclude pending USDC from value
+        if (protocolValueOnly > deployedToProtocols) {
+            yieldAccrued = protocolValueOnly - deployedToProtocols;
         }
     }
 
