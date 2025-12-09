@@ -235,7 +235,8 @@ contract USDL is
         _grantRole(ROUTER_ROLE, router);
 
         // Approve router to spend USDC
-        IERC20(assetAddress).approve(router, type(uint256).max);
+        bool success = IERC20(assetAddress).approve(router, type(uint256).max);
+        if (!success) revert();
 
         emit YieldRouterUpdated(oldRouter, router);
     }
@@ -510,7 +511,7 @@ contract USDL is
         if (receiver == address(this)) revert InvalidRecipient(receiver);
 
         uint256 rawShares = _toRawShares(shares, Math.Rounding.Ceil);
-        
+
         // Cache storage
         uint256 totalAssets_ = totalDepositedAssets;
         uint256 totalShares_ = _totalShares;
@@ -562,7 +563,7 @@ contract USDL is
     {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        
+
         uint256 lastDeposit = lastDepositBlock[owner];
         if (block.number < lastDeposit + MIN_HOLD_BLOCKS) {
             revert MinHoldPeriodNotReached(block.number, lastDeposit + MIN_HOLD_BLOCKS);
@@ -594,7 +595,14 @@ contract USDL is
         totalDepositedAssets = totalAssets_ - assets;
 
         // Redeem from router
-        yieldRouter.redeemFromProtocols(assets);
+        uint256 actualRedeemed = yieldRouter.redeemFromProtocols(assets);
+        // Note: actualRedeemed may be less than requested if protocols have slippage
+        if (actualRedeemed < assets) {
+            // Recalculate fee and net assets based on what was actually received
+            uint256 actualFee = (actualRedeemed * redemptionFeeBps) / BASIS_POINTS;
+            netAssets = actualRedeemed - actualFee;
+            fee = actualFee;
+        }
 
         // Burn shares
         _burnShares(owner, rawShares);
@@ -629,7 +637,7 @@ contract USDL is
     {
         if (shares == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        
+
         uint256 lastDeposit = lastDepositBlock[owner];
         if (block.number < lastDeposit + MIN_HOLD_BLOCKS) {
             revert MinHoldPeriodNotReached(block.number, lastDeposit + MIN_HOLD_BLOCKS);
@@ -640,7 +648,7 @@ contract USDL is
         }
 
         uint256 rawShares = _toRawShares(shares, Math.Rounding.Floor);
-        
+
         // Cache storage
         uint256 totalAssets_ = totalDepositedAssets;
         uint256 totalShares_ = _totalShares;
@@ -805,14 +813,10 @@ contract USDL is
         override(AccessControlUpgradeable, IERC165)
         returns (bool)
     {
-        return interfaceId == type(IERC20).interfaceId 
-            || interfaceId == type(IERC4626).interfaceId
-            || interfaceId == type(IERC165).interfaceId 
-            || interfaceId == type(IAccessControl).interfaceId
-            || interfaceId == type(IGetCCIPAdmin).interfaceId 
-            || interfaceId == type(IBurnMintERC20).interfaceId
-            || interfaceId == type(IUSDL).interfaceId
-            || super.supportsInterface(interfaceId);
+        return interfaceId == type(IERC20).interfaceId || interfaceId == type(IERC4626).interfaceId
+            || interfaceId == type(IERC165).interfaceId || interfaceId == type(IAccessControl).interfaceId
+            || interfaceId == type(IGetCCIPAdmin).interfaceId || interfaceId == type(IBurnMintERC20).interfaceId
+            || interfaceId == type(IUSDL).interfaceId || super.supportsInterface(interfaceId);
     }
 
     // ============ Pure Functions ============
@@ -958,7 +962,11 @@ contract USDL is
         return rebasedAmount.mulDiv(REBASE_INDEX_PRECISION, rebaseIndex, rounding);
     }
 
-    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding) internal view returns (uint256 rebasedAmount) {
+    function _toRebasedAmount(uint256 rawShares, Math.Rounding rounding)
+        internal
+        view
+        returns (uint256 rebasedAmount)
+    {
         if (rebaseIndex == 0) return rawShares;
         return rawShares.mulDiv(rebaseIndex, REBASE_INDEX_PRECISION, rounding);
     }
