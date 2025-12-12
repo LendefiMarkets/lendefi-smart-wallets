@@ -151,6 +151,9 @@ interface IYieldRouter {
     /// @notice Thrown when caller is not the vault
     error OnlyVault(address caller);
 
+    /// @notice Thrown when protocol operation doesn't meet expected slippage tolerance
+    error MEVSlippageProtection();
+
     // ============ Core Routing Functions ============
 
     /**
