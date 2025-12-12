@@ -256,7 +256,7 @@ contract LendefiPaymaster is BasePaymaster {
     function setTierGasLimit(SubscriptionTier tier, uint256 newLimit) external onlyOwner {
         if (newLimit == 0) revert InvalidGasLimit();
 
-        uint256 oldLimit;
+        uint256 oldLimit = 0;
         if (tier == SubscriptionTier.BASIC) {
             oldLimit = maxGasPerMonthBasic;
             maxGasPerMonthBasic = newLimit;
