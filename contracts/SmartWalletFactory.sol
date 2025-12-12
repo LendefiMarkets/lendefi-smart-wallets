@@ -109,13 +109,17 @@ contract SmartWalletFactory is IAccountFactory, Initializable, UUPSUpgradeable, 
             // Deploy the account using CREATE2
             account = Clones.cloneDeterministic(address(accountImplementation), _getSalt(accountOwner, salt));
 
+            // Update mappings before external call
+            userToWallet[accountOwner] = account;
+            isLendefiWallet[account] = true;
+
             // Initialize the account
             SmartWallet(payable(account)).initialize(accountOwner);
+        } else {
+            // Account already deployed, just update mappings
+            userToWallet[accountOwner] = account;
+            isLendefiWallet[account] = true;
         }
-
-        // Update mappings
-        userToWallet[accountOwner] = account;
-        isLendefiWallet[account] = true;
 
         emit AccountCreated(account, accountOwner, salt);
         return account;
