@@ -106,7 +106,7 @@ contract YieldRouter is
     uint256 public lastYieldAccrualTimestamp;
 
     /// @notice Tracked USDC balance (internal accounting to prevent inflation attacks)
-    /// @dev Only USDC received through depositToProtocols or harvested yield is tracked
+    /// @dev Only USDC recieved through depositToProtocols or harvested yield is tracked
     uint256 public trackedUSDCBalance;
 
     /// @notice Pending deposits waiting to be allocated to protocols
@@ -741,21 +741,9 @@ contract YieldRouter is
     function _redeemFromSingleYieldAsset(address token, uint256 amount) internal returns (uint256 redeemed) {
         YieldAssetConfig storage config = yieldAssetConfigs[token];
         uint256 balance = IERC20(token).balanceOf(address(this));
-
         if (balance == 0) return 0;
-
-        // Cache usdc storage read
-        address _usdc = usdc;
-        uint256 usdcBefore = IERC20(_usdc).balanceOf(address(this));
-
-        // If amount is max, redeem all shares; otherwise redeem target amount
-        if (amount == type(uint256).max) {
-            _redeemAllShares(token, balance, config, config.manager);
-        } else {
-            _redeemSingleAsset(token, amount, config, config.manager);
-        }
-
-        redeemed = IERC20(_usdc).balanceOf(address(this)) - usdcBefore;
+        // Redeem either target amount or all shares if amount is max
+        redeemed = _redeemSingleAsset(token, balance, amount, config, config.manager);
     }
 
     /**
@@ -790,11 +778,11 @@ contract YieldRouter is
         SkyConfig memory sky = skyConfig;
         // Step 1: USDC -> USDS via LitePSM
         IERC20(depositToken).forceApprove(sky.litePSM, amount);
-        uint256 usdsReceived = ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
-        if (usdsReceived != amount * 1e12) revert MEVSlippageProtection();
+        uint256 usdsrecieved = ILitePSMWrapper(sky.litePSM).sellGem(address(this), amount);
+        if (usdsrecieved != amount * 1e12) revert MEVSlippageProtection();
         // Step 2: USDS -> sUSDS via ERC4626 deposit
-        IERC20(sky.usds).forceApprove(sky.sUsds, usdsReceived);
-        IERC4626(sky.sUsds).deposit(usdsReceived, address(this));
+        IERC20(sky.usds).forceApprove(sky.sUsds, usdsrecieved);
+        IERC4626(sky.sUsds).deposit(usdsrecieved, address(this));
     }
 
     /**
@@ -809,26 +797,34 @@ contract YieldRouter is
     }
 
     /**
-     * @notice Redeem from a single asset (used in loops)
+     * @notice Redeem from a single asset (used in loops and auto-drain)
      * @param token Yield token address
-     * @param redeemTarget Target amount to redeem
+     * @param balance Current balance of yield tokens
+     * @param redeemTarget Target amount to redeem (or type(uint256).max to redeem all)
      * @param config Asset configuration
      * @param manager Manager contract address
+     * @return recieved Actual USDC amount recieved
      */
-    function _redeemSingleAsset(address token, uint256 redeemTarget, YieldAssetConfig storage config, address manager)
-        internal
-    {
-        uint256 received;
+    function _redeemSingleAsset(
+        address token,
+        uint256 balance,
+        uint256 redeemTarget,
+        YieldAssetConfig storage config,
+        address manager
+    ) internal returns (uint256 recieved) {
+        uint256 amount = redeemTarget == type(uint256).max ? balance : redeemTarget;
+
         if (config.assetType == AssetType.ONDO_OUSG) {
-            (received,) = _redeemOUSG(token, redeemTarget, manager, config.depositToken);
+            (recieved,) = _redeemOUSG(token, amount, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            received = _redeemAaveV3(token, redeemTarget, manager, config.depositToken);
+            recieved = IAaveV3Pool(manager).withdraw(config.depositToken, amount, address(this));
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            received = _redeemSky(redeemTarget);
+            recieved = _redeemSky(amount);
         } else {
-            received = _redeemERC4626(redeemTarget, manager);
+            recieved = _redeemERC4626(amount, manager);
         }
-        emit ProtocolRedeemed(token, redeemTarget, received);
+
+        emit ProtocolRedeemed(token, redeemTarget, recieved);
     }
 
     /**
@@ -1018,41 +1014,6 @@ contract YieldRouter is
         uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
         if (withdrawAmount > 0) {
             shares = vaultContract.withdraw(withdrawAmount, address(this), address(this));
-        }
-    }
-
-    /**
-     * @notice Redeem all shares from a single asset (for auto-drain)
-     * @param token Yield token address
-     * @param balance Balance of yield tokens to redeem
-     * @param config Asset configuration
-     * @param manager Manager contract address
-     */
-    function _redeemAllShares(address token, uint256 balance, YieldAssetConfig storage config, address manager)
-        internal
-    {
-        if (config.assetType == AssetType.ONDO_OUSG) {
-            _redeemOUSG(token, balance, manager, config.depositToken);
-        } else if (config.assetType == AssetType.AAVE_V3) {
-            // Aave aTokens: withdraw all balance (aTokens are 1:1 with underlying)
-            IAaveV3Pool(manager).withdraw(config.depositToken, balance, address(this));
-        } else if (config.assetType == AssetType.SKY_SUSDS) {
-            // Sky sUSDS: redeem all shares
-            SkyConfig memory sky = skyConfig;
-            IERC4626 sUsdsVault = IERC4626(sky.sUsds);
-            sUsdsVault.redeem(balance, address(this), address(this));
-            // Convert all USDS to USDC
-            uint256 usdsBalance = IERC20(sky.usds).balanceOf(address(this));
-            if (usdsBalance > 0) {
-                uint256 usdcAmount = usdsBalance / 1e12;
-                if (usdcAmount > 0) {
-                    IERC20(sky.usds).forceApprove(sky.litePSM, usdsBalance);
-                    ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
-                }
-            }
-        } else {
-            // ERC4626: redeem all shares
-            IERC4626(manager).redeem(balance, address(this), address(this));
         }
     }
 
