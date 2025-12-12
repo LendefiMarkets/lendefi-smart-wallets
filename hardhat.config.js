@@ -27,7 +27,7 @@ module.exports = {
       forking: process.env.ETHEREUM_RPC_URL
         ? {
             url: process.env.ETHEREUM_RPC_URL,
-            blockNumber: process.env.FORK_BLOCK ? Number(process.env.FORK_BLOCK) : undefined,
+            blockNumber: 23996281, // Fixed block for consistent testing and local caching
           }
         : undefined,
     },
