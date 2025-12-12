@@ -230,13 +230,8 @@ contract USDL is
     function setYieldRouter(address router) external nonZeroAddress(router) onlyRole(DEFAULT_ADMIN_ROLE) {
         // Router can only be set once - changing it would break accounting
         if (address(yieldRouter) != address(0)) revert RouterAlreadySet();
-
         yieldRouter = IYieldRouter(router);
         _grantRole(ROUTER_ROLE, router);
-
-        // Approve router to spend USDC
-        IERC20(assetAddress).forceApprove(router, type(uint256).max);
-
         emit YieldRouterSet(address(0), router);
     }
 
