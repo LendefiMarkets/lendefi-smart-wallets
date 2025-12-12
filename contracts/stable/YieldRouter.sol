@@ -219,7 +219,7 @@ contract YieldRouter is
         // Calculate redeemed based on tracked balance
         redeemed = tracked > amount ? amount : tracked;
 
-        // Update tracked balance and transfer
+        // Update state and emit event before external transfer
         if (redeemed > 0) {
             trackedUSDCBalance = tracked - redeemed;
             totalDepositedAssets -= redeemed;
@@ -395,8 +395,8 @@ contract YieldRouter is
         uint256 usdcBalance = IERC20(_usdc).balanceOf(address(this));
         if (usdcBalance > 0) {
             trackedUSDCBalance = 0;
-            IERC20(_usdc).safeTransfer(_vault, usdcBalance);
             emit EmergencyWithdrawal(_vault, usdcBalance);
+            IERC20(_usdc).safeTransfer(_vault, usdcBalance);
         }
     }
 
@@ -657,12 +657,15 @@ contract YieldRouter is
         // Check OUSG minimum requirements
         if (!_checkOUSGMinimum(amount)) return;
 
+        // Update storage before external calls
+        trackedUSDCBalance -= amount;
+
         // Deposit to protocols
         uint256 allocated = _performDeposits(tokens, weights, lastActiveIndex, amount);
 
-        // Update storage
-        if (allocated > 0) {
-            trackedUSDCBalance -= allocated;
+        // Refund if not all allocated
+        if (allocated < amount) {
+            trackedUSDCBalance += (amount - allocated);
         }
     }
 
@@ -840,17 +843,15 @@ contract YieldRouter is
         YieldAssetConfig storage config,
         address manager
     ) internal {
-        uint256 sharesUsed;
         if (config.assetType == AssetType.ONDO_OUSG) {
-            (, sharesUsed) = _redeemOUSG(token, withdrawTarget, manager, config.depositToken);
+            _redeemOUSG(token, withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.AAVE_V3) {
-            sharesUsed = _withdrawAaveV3(token, withdrawTarget, manager, config.depositToken);
+            _withdrawAaveV3(token, withdrawTarget, manager, config.depositToken);
         } else if (config.assetType == AssetType.SKY_SUSDS) {
-            sharesUsed = _withdrawSky(withdrawTarget);
+            _withdrawSky(withdrawTarget);
         } else {
-            sharesUsed = _withdrawERC4626(withdrawTarget, manager);
+            _withdrawERC4626(withdrawTarget, manager);
         }
-        emit ProtocolWithdrawn(token, withdrawTarget, sharesUsed);
     }
 
     /**
@@ -884,25 +885,7 @@ contract YieldRouter is
         IERC20(token).forceApprove(manager, ousgAmount);
         redeemed = IOUSGInstantManager(manager).redeem(ousgAmount, depositToken, 0);
         ousgRedeemed = ousgAmount;
-    }
-
-    /**
-     * @notice Redeem aTokens from Aave V3 for USDC
-     * @param token aToken address
-     * @param redeemTarget Target USDC amount to receive
-     * @param manager Aave V3 pool address
-     * @param depositToken Underlying token (USDC)
-     * @return redeemed Actual USDC amount redeemed
-     */
-    function _redeemAaveV3(address token, uint256 redeemTarget, address manager, address depositToken)
-        internal
-        returns (uint256 redeemed)
-    {
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        uint256 withdrawAmount = redeemTarget > balance ? balance : redeemTarget;
-        if (withdrawAmount > 0) {
-            redeemed = IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
-        }
+        emit ProtocolWithdrawn(token, usdcTarget, ousgRedeemed);
     }
 
     /**
@@ -920,6 +903,7 @@ contract YieldRouter is
         uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
         if (withdrawAmount > 0) {
             withdrawn = IAaveV3Pool(manager).withdraw(depositToken, withdrawAmount, address(this));
+            emit ProtocolWithdrawn(token, withdrawTarget, withdrawn);
         }
     }
 
@@ -979,6 +963,7 @@ contract YieldRouter is
             IERC20(sky.usds).forceApprove(sky.litePSM, usdsWithdrawn);
             uint256 usdsUsed = ILitePSMWrapper(sky.litePSM).buyGem(address(this), usdcAmount);
             if (usdsUsed != usdcAmount * 1e12) revert MEVSlippageProtection();
+            emit ProtocolWithdrawn(sky.sUsds, withdrawTarget, sharesUsed);
         }
     }
 
@@ -1014,6 +999,7 @@ contract YieldRouter is
         uint256 withdrawAmount = withdrawTarget > maxWithdraw ? maxWithdraw : withdrawTarget;
         if (withdrawAmount > 0) {
             shares = vaultContract.withdraw(withdrawAmount, address(this), address(this));
+            emit ProtocolWithdrawn(manager, withdrawTarget, shares);
         }
     }
 
