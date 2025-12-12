@@ -137,7 +137,7 @@ contract USDL is
     event TotalDepositedAssetsUpdated(uint256 indexed oldAmount, uint256 indexed newAmount);
     event BridgeMint(address indexed caller, address indexed account, uint256 indexed amount);
     event BridgeBurn(address indexed caller, address indexed account, uint256 indexed amount);
-    event YieldRouterUpdated(address indexed oldRouter, address indexed newRouter);
+    event YieldRouterSet(address indexed oldRouter, address indexed newRouter);
     event DonatedTokensRescued(address indexed to, uint256 indexed amount);
 
     // ============ Errors ============
@@ -153,6 +153,7 @@ contract USDL is
     error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed);
     error MinHoldPeriodNotReached(uint256 currentBlock, uint256 unlockBlock);
     error RouterNotSet();
+    error RouterAlreadySet();
 
     // ============ Modifiers ============
 
@@ -220,26 +221,23 @@ contract USDL is
     // ============ Admin Functions ============
 
     /**
-     * @notice Set the yield router address
+     * @notice Set the yield router address (can only be set once)
      * @param router YieldRouter contract address
+     * @dev The router holds all deposited assets and manages accounting.
+     *      Changing routers would break accounting. If router logic needs updating,
+     *      upgrade the YieldRouter proxy instead.
      */
     function setYieldRouter(address router) external nonZeroAddress(router) onlyRole(DEFAULT_ADMIN_ROLE) {
-        address oldRouter = address(yieldRouter);
-
-        // Revoke old router's role and allowance if exists
-        if (oldRouter != address(0)) {
-            _revokeRole(ROUTER_ROLE, oldRouter);
-            IERC20(assetAddress).approve(oldRouter, 0);
-        }
+        // Router can only be set once - changing it would break accounting
+        if (address(yieldRouter) != address(0)) revert RouterAlreadySet();
 
         yieldRouter = IYieldRouter(router);
         _grantRole(ROUTER_ROLE, router);
 
         // Approve router to spend USDC
-        bool success = IERC20(assetAddress).approve(router, type(uint256).max);
-        if (!success) revert();
+        IERC20(assetAddress).forceApprove(router, type(uint256).max);
 
-        emit YieldRouterUpdated(oldRouter, router);
+        emit YieldRouterSet(address(0), router);
     }
 
     /**
