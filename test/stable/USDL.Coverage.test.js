@@ -176,7 +176,7 @@ describe("USDL - Coverage Tests", function () {
     });
 
     describe("setYieldRouter - Replace Existing Router", function () {
-        it("Should revoke old router role when setting new router", async function () {
+        it("Should revert when trying to set router twice", async function () {
             const { usdl, router, owner, usdc } = await loadFixture(usdlFixture);
             
             const oldRouterAddress = await router.getAddress();
@@ -193,13 +193,13 @@ describe("USDL - Coverage Tests", function () {
             );
             const newRouterAddress = await newRouter.getAddress();
             
-            // Set new router (should revoke old router's role)
-            await usdl.setYieldRouter(newRouterAddress);
+            // Should revert because router is already set
+            await expect(
+                usdl.setYieldRouter(newRouterAddress)
+            ).to.be.revertedWithCustomError(usdl, "RouterAlreadySet");
             
-            // Old router should no longer have role
-            expect(await usdl.hasRole(ROUTER_ROLE, oldRouterAddress)).to.be.false;
-            // New router should have role
-            expect(await usdl.hasRole(ROUTER_ROLE, newRouterAddress)).to.be.true;
+            // Old router should still have role
+            expect(await usdl.hasRole(ROUTER_ROLE, oldRouterAddress)).to.be.true;
         });
     });
 
