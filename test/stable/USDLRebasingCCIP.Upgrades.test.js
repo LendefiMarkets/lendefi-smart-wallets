@@ -30,8 +30,8 @@ describe("USDLRebasingCCIP - Upgrades & Interfaces", function () {
         it("Should upgrade to new implementation", async function () {
             const { token, owner } = await loadFixture(usdlRebasingCCIPFixture);
 
-            // Version starts at 0
-            expect(await token.version()).to.equal(0);
+            // Version starts at 1
+            expect(await token.version()).to.equal(1);
 
             // Deploy V2 implementation
             const USDLRebasingCCIPV2 = await ethers.getContractFactory("USDLRebasingCCIPV2");
@@ -41,8 +41,8 @@ describe("USDLRebasingCCIP - Upgrades & Interfaces", function () {
             // Upgrade via UUPS
             await token.connect(owner).upgradeToAndCall(await v2Impl.getAddress(), "0x");
             
-            // Version increments to 1 after upgrade
-            expect(await token.version()).to.equal(1);
+            // Version increments to 2 after upgrade
+            expect(await token.version()).to.equal(2);
         });
 
         it("Should preserve state after upgrade", async function () {

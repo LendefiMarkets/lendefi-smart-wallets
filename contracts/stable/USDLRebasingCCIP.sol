@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import {ERC20PausableUpgradeable} from
-    "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IBurnMintERC20} from "../interfaces/IBurnMintERC20.sol";
 import {IGetCCIPAdmin} from "../interfaces/IGetCCIPAdmin.sol";
 import {IAggregatorV3Interface} from "../interfaces/IAggregatorV3Interface.sol";
@@ -17,10 +19,12 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// @dev Uses Chainlink price feeds to maintain 1:1 USDC peg with dynamic rebasing
 contract USDLRebasingCCIP is
     Initializable,
-    ERC20PausableUpgradeable,
+    IERC165,
+    IGetCCIPAdmin,
+    IBurnMintERC20,
+    PausableUpgradeable,
     AccessControlUpgradeable,
-    UUPSUpgradeable,
-    IGetCCIPAdmin
+    UUPSUpgradeable
 {
     using Math for uint256;
 
@@ -33,21 +37,28 @@ contract USDLRebasingCCIP is
 
     /// @notice Precision for rebase index (1e6 for 6 decimal token)
     uint256 public constant REBASE_INDEX_PRECISION = 1e6;
+    
+    // ============ Storage Variables ============
+    
     /// @notice Deployed version (increments on each upgrade)
     uint256 public version;
     /// @notice Chainlink price feed contract
     IAggregatorV3Interface public priceFeed;
     /// @notice CCIP admin address for token pool registration
     address public ccipAdmin;
+    /// @notice Current rebase index (updated from oracle)
+    uint256 public rebaseIndex;
 
+    // ============ ERC20 Storage (owned, not inherited) ============
+
+    /// @notice Token name
+    string private _name;
+    /// @notice Token symbol
+    string private _symbol;
     /// @notice Raw share balances (not rebased)
     mapping(address => uint256) private _shares;
     /// @notice Total raw shares (not rebased)
     uint256 private _totalShares;
-
-    /// @notice Current rebase index (updated from oracle)
-    uint256 public rebaseIndex;
-
     /// @notice Allowances (stored in REBASED amounts for UX)
     mapping(address => mapping(address => uint256)) private _allowances;
 
@@ -98,7 +109,13 @@ contract USDLRebasingCCIP is
     /// @param _multisig Owner and admin address (Multisig)
     /// @param _priceFeed Chainlink price feed address (USDL price in USD)
     function initialize(address _multisig, address _priceFeed) external initializer {
-        __ERC20_init("Lendefi USD V3 (CCIP)", "USDL");
+        if (_multisig == address(0)) revert ZeroAddress();
+        if (_priceFeed == address(0)) revert ZeroAddress();
+
+        _name = "Lendefi USD V3 (CCIP)";
+        _symbol = "USDL";
+
+        __Pausable_init();
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
@@ -106,9 +123,26 @@ contract USDLRebasingCCIP is
         _grantRole(UPGRADER_ROLE, _multisig);
         _grantRole(MANAGER_ROLE, _multisig);
 
+        version = 1;
         ccipAdmin = _multisig;
         priceFeed = IAggregatorV3Interface(_priceFeed);
         rebaseIndex = REBASE_INDEX_PRECISION; // Start at 1.0
+    }
+
+    // ============ Admin Functions ============
+
+    /**
+     * @notice Pause the contract
+     */
+    function pause() external onlyRole(MANAGER_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @notice Unpause the contract
+     */
+    function unpause() external onlyRole(MANAGER_ROLE) {
+        _unpause();
     }
 
     // ============ CCIP Interface (IBurnMintERC20) ============
@@ -118,7 +152,7 @@ contract USDLRebasingCCIP is
      * @param account Recipient address
      * @param amount Amount of RAW SHARES to mint
      */
-    function mint(address account, uint256 amount) external onlyRole(BRIDGE_ROLE) {
+    function mint(address account, uint256 amount) external whenNotPaused onlyRole(BRIDGE_ROLE) {
         _mintShares(account, amount);
         emit BridgeMint(msg.sender, account, amount);
     }
@@ -128,7 +162,7 @@ contract USDLRebasingCCIP is
      * @param account Address to burn from
      * @param amount Amount of RAW SHARES to burn
      */
-    function burn(address account, uint256 amount) external onlyRole(BRIDGE_ROLE) {
+    function burn(address account, uint256 amount) external whenNotPaused onlyRole(BRIDGE_ROLE) {
         _burnShares(account, amount);
         emit BridgeBurn(msg.sender, account, amount);
     }
@@ -137,7 +171,7 @@ contract USDLRebasingCCIP is
      * @notice Burns shares from caller
      * @param amount Amount of RAW SHARES to burn
      */
-    function burn(uint256 amount) external onlyRole(BRIDGE_ROLE) {
+    function burn(uint256 amount) external whenNotPaused onlyRole(BRIDGE_ROLE) {
         _burnShares(msg.sender, amount);
         emit BridgeBurn(msg.sender, msg.sender, amount);
     }
@@ -147,10 +181,10 @@ contract USDLRebasingCCIP is
      * @param account Address to burn from
      * @param amount Amount of RAW SHARES to burn
      */
-    function burnFrom(address account, uint256 amount) external onlyRole(BRIDGE_ROLE) {
+    function burnFrom(address account, uint256 amount) external whenNotPaused onlyRole(BRIDGE_ROLE) {
         // Allowance check uses rebased amount
         uint256 rebasedAmount = _toRebasedAmount(amount, Math.Rounding.Ceil);
-        _useAllowance(account, msg.sender, rebasedAmount);
+        _spendAllowance(account, msg.sender, rebasedAmount);
 
         _burnShares(account, amount);
         emit BridgeBurn(msg.sender, account, amount);
@@ -193,11 +227,13 @@ contract USDLRebasingCCIP is
         rebaseIndex = newIndex;
     }
 
+    // ============ ERC20 Functions ============
+
     /// @notice Transfer tokens to recipient
     /// @param to Recipient address
     /// @param amount Amount to transfer (in rebased units)
     /// @return True if transfer was successful
-    function transfer(address to, uint256 amount) public override returns (bool) {
+    function transfer(address to, uint256 amount) public whenNotPaused returns (bool) {
         _transferShares(msg.sender, to, _toRawShares(amount, Math.Rounding.Floor));
         return true;
     }
@@ -207,8 +243,8 @@ contract USDLRebasingCCIP is
     /// @param to Recipient address
     /// @param amount Amount to transfer (in rebased units)
     /// @return True if transfer was successful
-    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
-        _useAllowance(from, msg.sender, amount);
+    function transferFrom(address from, address to, uint256 amount) public whenNotPaused returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
         _transferShares(from, to, _toRawShares(amount, Math.Rounding.Floor));
         return true;
     }
@@ -217,23 +253,23 @@ contract USDLRebasingCCIP is
     /// @param spender Address to approve
     /// @param amount Amount to approve (in rebased units)
     /// @return True if approval was successful
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        _setAllowance(msg.sender, spender, amount);
+    function approve(address spender, uint256 amount) public whenNotPaused returns (bool) {
+        _approve(msg.sender, spender, amount);
         return true;
     }
+
+    // ============ View Functions ============
 
     /// @notice Get balance of account (rebased)
     /// @param account Address to query
     /// @return Balance in rebased units
-    function balanceOf(address account) public view override returns (uint256) {
+    function balanceOf(address account) public view returns (uint256) {
         return _toRebasedAmount(_shares[account], Math.Rounding.Floor);
     }
 
-    // ============ ERC20 Overrides ============
-
     /// @notice Get total supply of USDL (rebased)
     /// @return Total supply in rebased units
-    function totalSupply() public view override returns (uint256) {
+    function totalSupply() public view returns (uint256) {
         return _toRebasedAmount(_totalShares, Math.Rounding.Floor);
     }
 
@@ -241,21 +277,54 @@ contract USDLRebasingCCIP is
     /// @param owner Token owner
     /// @param spender Approved spender
     /// @return Allowance amount (in rebased units)
-    function allowance(address owner, address spender) public view override returns (uint256) {
+    function allowance(address owner, address spender) public view returns (uint256) {
         return _allowances[owner][spender];
+    }
+
+    /// @notice Get raw shares balance
+    /// @param account Address to query
+    /// @return Raw shares (not rebased)
+    function sharesOf(address account) public view returns (uint256) {
+        return _shares[account];
+    }
+
+    /// @notice Get total raw shares
+    /// @return Total raw shares (not rebased)
+    function totalShares() public view returns (uint256) {
+        return _totalShares;
+    }
+
+    /// @notice Get token name
+    /// @return Token name string
+    function name() public view returns (string memory) {
+        return _name;
+    }
+
+    /// @notice Get token symbol
+    /// @return Token symbol string
+    function symbol() public view returns (string memory) {
+        return _symbol;
     }
 
     /// @notice Check if contract supports an interface
     /// @param interfaceId The interface ID to check
     /// @return True if interface is supported
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
-        return interfaceId == type(IBurnMintERC20).interfaceId || interfaceId == type(IGetCCIPAdmin).interfaceId
-            || super.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(AccessControlUpgradeable, IERC165)
+        returns (bool)
+    {
+        return interfaceId == type(IERC20).interfaceId || interfaceId == type(IERC165).interfaceId
+            || interfaceId == type(IAccessControl).interfaceId || interfaceId == type(IBurnMintERC20).interfaceId
+            || interfaceId == type(IGetCCIPAdmin).interfaceId || super.supportsInterface(interfaceId);
     }
+
+    // ============ Pure Functions ============
 
     /// @notice Get token decimals
     /// @return Number of decimals (6)
-    function decimals() public pure override returns (uint8) {
+    function decimals() public pure returns (uint8) {
         return 6;
     }
 
@@ -305,27 +374,27 @@ contract USDLRebasingCCIP is
         emit Transfer(from, to, _toRebasedAmount(rawShares, Math.Rounding.Floor));
     }
 
-    /// @notice Set allowance for spender
+    /// @notice Approve spender allowance
     /// @param owner Token owner
     /// @param spender Approved spender
-    /// @param amount Allowance amount (in rebased units)
-    function _setAllowance(address owner, address spender, uint256 amount) internal {
+    /// @param value Allowance amount (in rebased units)
+    function _approve(address owner, address spender, uint256 value) internal {
         if (owner == address(0)) revert ZeroAddress();
         if (spender == address(0)) revert ZeroAddress();
-        _allowances[owner][spender] = amount;
-        emit Approval(owner, spender, amount);
+        _allowances[owner][spender] = value;
+        emit Approval(owner, spender, value);
     }
 
     /// @notice Spend allowance from owner's account
     /// @param owner Token owner
     /// @param spender Approved spender
-    /// @param amount Amount to spend (in rebased units)
-    function _useAllowance(address owner, address spender, uint256 amount) internal {
+    /// @param value Amount to spend (in rebased units)
+    function _spendAllowance(address owner, address spender, uint256 value) internal {
         uint256 currentAllowance = _allowances[owner][spender];
         if (currentAllowance != type(uint256).max) {
-            if (currentAllowance < amount) revert InsufficientAllowance();
+            if (currentAllowance < value) revert InsufficientAllowance();
             unchecked {
-                _allowances[owner][spender] = currentAllowance - amount;
+                _allowances[owner][spender] = currentAllowance - value;
             }
         }
     }
