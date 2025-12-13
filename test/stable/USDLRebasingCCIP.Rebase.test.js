@@ -95,20 +95,20 @@ describe("USDLRebasingCCIP - Rebase Index", function () {
             const initialAmount = ethers.parseUnits("1000", 6);
             await token.connect(bridge).mint(user1.address, initialAmount);
 
-            // First rebase: 5%
-            await priceFeed.setPrice(ethers.parseUnits("1.05", 8));
+            // First rebase: +1% (within MAX_PRICE_CHANGE_BPS)
+            await priceFeed.setPrice(ethers.parseUnits("1.01", 8));
             await token.updateRebaseIndex();
-            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1050", 6));
+            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1010", 6));
 
-            // Second rebase: 10% total
-            await priceFeed.setPrice(ethers.parseUnits("1.1", 8));
+            // Second rebase: +1% from previous (1.01 * 1.01 = 1.0201)
+            await priceFeed.setPrice(ethers.parseUnits("1.0201", 8));
             await token.updateRebaseIndex();
-            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1100", 6));
+            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1020.1", 6));
 
-            // Third rebase: 15% total
-            await priceFeed.setPrice(ethers.parseUnits("1.15", 8));
+            // Third rebase: +1% from previous (1.0201 * 1.01 = 1.030301)
+            await priceFeed.setPrice(ethers.parseUnits("1.030301", 8));
             await token.updateRebaseIndex();
-            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1150", 6));
+            expect(await token.balanceOf(user1.address)).to.equal(ethers.parseUnits("1030.301", 6));
         });
     });
 
