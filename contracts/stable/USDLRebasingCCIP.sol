@@ -26,7 +26,7 @@ contract USDLRebasingCCIP is
     AccessControlUpgradeable,
     UUPSUpgradeable
 {
-     using Math for uint256;
+    using Math for uint256;
 
     /// @notice AccessControl role for CCIP bridge operations
     bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");
@@ -268,12 +268,7 @@ contract USDLRebasingCCIP is
     /// @param to Recipient address
     /// @param amount Amount to transfer (in rebased units)
     /// @return True if transfer was successful
-    function transferFrom(address from, address to, uint256 amount)
-        public
-        override
-        whenNotPaused
-        returns (bool)
-    {
+    function transferFrom(address from, address to, uint256 amount) public override whenNotPaused returns (bool) {
         _useAllowance(from, msg.sender, amount);
         _transferShares(from, to, _toRawShares(amount, Math.Rounding.Floor));
         return true;
@@ -314,7 +309,12 @@ contract USDLRebasingCCIP is
     /// @notice Check if contract supports an interface
     /// @param interfaceId The interface ID to check
     /// @return True if interface is supported
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable, IERC165) returns (bool) {
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(AccessControlUpgradeable, IERC165)
+        returns (bool)
+    {
         return interfaceId == type(IERC20).interfaceId || interfaceId == type(IERC165).interfaceId
             || interfaceId == type(IAccessControl).interfaceId || interfaceId == type(IGetCCIPAdmin).interfaceId
             || interfaceId == type(IBurnMintERC20).interfaceId || super.supportsInterface(interfaceId);
