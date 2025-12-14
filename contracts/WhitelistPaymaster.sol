@@ -6,6 +6,11 @@ import {PackedUserOperation} from "./aa-v07/contracts/interfaces/PackedUserOpera
 import {UserOperationLib} from "./aa-v07/contracts/core/UserOperationLib.sol";
 import {IEntryPoint} from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
 
+/// @dev Minimal interface for registry/factory wallet validation
+interface IWalletRegistry {
+    function isValidWallet(address wallet) external view returns (bool);
+}
+
 /**
  * @title WhitelistPaymaster
  * @author Lendefi Team
@@ -15,6 +20,14 @@ import {IEntryPoint} from "./aa-v07/contracts/interfaces/IEntryPoint.sol";
  */
 contract WhitelistPaymaster is BasePaymaster {
     using UserOperationLib for PackedUserOperation;
+
+    // ============ Constants ============
+
+    /// @dev SmartWallet.execute(address,uint256,bytes)
+    bytes4 private constant EXECUTE_SELECTOR = 0xb61d27f6;
+
+    /// @dev SmartWallet.executeBatch(address[],uint256[],bytes[])
+    bytes4 private constant EXECUTE_BATCH_SELECTOR = 0x47e1da2a;
 
     // ============ Storage ============
 
@@ -27,16 +40,27 @@ contract WhitelistPaymaster is BasePaymaster {
     /// @notice Total gas sponsored (in wei)
     uint256 public totalGasSponsored;
 
+    /// @notice Optional registry/factory used to validate `userOp.sender`
+    address public walletRegistry;
+
+    /// @notice If true, require `userOp.sender` to be a valid wallet in `walletRegistry`
+    bool public enforceWalletRegistry;
+
     // ============ Events ============
 
     event ContractWhitelisted(address indexed contractAddress, bool whitelisted);
     event TransactionSponsored(address indexed user, address indexed target, uint256 actualGasCost);
+
+    event WalletRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    event WalletRegistryEnforcementUpdated(bool enforced);
 
     // ============ Errors ============
 
     error TargetNotWhitelisted(address target);
     error InvalidUserOperation();
     error ZeroAddress();
+    error InvalidWallet(address wallet);
+    error WalletRegistryNotSet();
 
     // ============ Constructor ============
 
@@ -78,6 +102,30 @@ contract WhitelistPaymaster is BasePaymaster {
     }
 
     /**
+     * @notice Set wallet registry/factory contract used to validate `userOp.sender`
+     * @dev Set to address(0) to disable registry lookups (also disables enforcement).
+     */
+    function setWalletRegistry(address newRegistry) external onlyOwner {
+        address old = walletRegistry;
+        walletRegistry = newRegistry;
+        if (newRegistry == address(0)) {
+            enforceWalletRegistry = false;
+            emit WalletRegistryEnforcementUpdated(false);
+        }
+        emit WalletRegistryUpdated(old, newRegistry);
+    }
+
+    /**
+     * @notice Enable/disable wallet registry enforcement
+     * @dev When enabled, `walletRegistry` must be set and `userOp.sender` must be valid.
+     */
+    function setEnforceWalletRegistry(bool enforced) external onlyOwner {
+        if (enforced && walletRegistry == address(0)) revert WalletRegistryNotSet();
+        enforceWalletRegistry = enforced;
+        emit WalletRegistryEnforcementUpdated(enforced);
+    }
+
+    /**
      * @notice Check if a contract is whitelisted
      * @param contractAddress Address to check
      * @return True if whitelisted
@@ -99,16 +147,40 @@ contract WhitelistPaymaster is BasePaymaster {
         bytes32, /* userOpHash */
         uint256 /* maxCost */
     ) internal view override returns (bytes memory context, uint256 validationData) {
-        // Extract target contract from calldata
-        address target = _extractTarget(userOp.callData);
-
-        // Validate target is whitelisted
-        if (!whitelistedContracts[target]) {
-            revert TargetNotWhitelisted(target);
+        if (enforceWalletRegistry) {
+            address registry = walletRegistry;
+            if (registry == address(0)) revert WalletRegistryNotSet();
+            if (!IWalletRegistry(registry).isValidWallet(userOp.sender)) {
+                revert InvalidWallet(userOp.sender);
+            }
         }
 
-        // Return validation success
-        return ("", 0);
+        bytes calldata callData = userOp.callData;
+        if (callData.length < 4) revert InvalidUserOperation();
+
+        bytes4 selector = bytes4(callData[0:4]);
+
+        // SmartWallet.execute(address,uint256,bytes)
+        if (selector == EXECUTE_SELECTOR) {
+            (address target,,) = abi.decode(callData[4:], (address, uint256, bytes));
+            if (target == address(0)) revert ZeroAddress();
+            if (!whitelistedContracts[target]) revert TargetNotWhitelisted(target);
+            return ("", 0);
+        }
+
+        // SmartWallet.executeBatch(address[],uint256[],bytes[])
+        if (selector == EXECUTE_BATCH_SELECTOR) {
+            (address[] memory targets,,) = abi.decode(callData[4:], (address[], uint256[], bytes[]));
+            uint256 length = targets.length;
+            for (uint256 i = 0; i < length; ++i) {
+                address target = targets[i];
+                if (target == address(0)) revert ZeroAddress();
+                if (!whitelistedContracts[target]) revert TargetNotWhitelisted(target);
+            }
+            return ("", 0);
+        }
+
+        revert InvalidUserOperation();
     }
 
     /**
@@ -131,32 +203,8 @@ contract WhitelistPaymaster is BasePaymaster {
      * @param callData User operation calldata
      * @return target Target contract address
      */
-    function _extractTarget(bytes calldata callData) internal pure returns (address target) {
-        // SmartWallet.execute() format: selector(4) + target(20) + value(32) + data_offset
-        // SmartWallet.executeBatch() format: selector(4) + targets_offset(32) + values_offset(32) + datas_offset(32) + targets_length(32) + first_target(32)
-
-        if (callData.length < 4) revert InvalidUserOperation();
-
-        bytes4 selector = bytes4(callData[0:4]);
-
-        // execute(address,uint256,bytes) - selector: 0xb61d27f6
-        if (selector == 0xb61d27f6) {
-            if (callData.length < 36) revert InvalidUserOperation();
-            // Target is at bytes 4-35 (address is left-padded in first 32-byte word)
-            target = address(uint160(uint256(bytes32(callData[4:36]))));
-        }
-        // executeBatch(address[],uint256[],bytes[]) - selector: 0x47e1da2a
-        else if (selector == 0x47e1da2a) {
-            if (callData.length < 164) revert InvalidUserOperation();
-            // First target is at bytes 132-163 (after 3 offsets + array length)
-            target = address(uint160(uint256(bytes32(callData[132:164]))));
-        }
-        // Default: try to extract from standard position
-        else {
-            if (callData.length < 36) revert InvalidUserOperation();
-            target = address(uint160(uint256(bytes32(callData[4:36]))));
-        }
-
-        if (target == address(0)) revert ZeroAddress();
+    function _extractTarget(bytes calldata callData) internal pure returns (address) {
+        (callData);
+        revert InvalidUserOperation();
     }
 }
